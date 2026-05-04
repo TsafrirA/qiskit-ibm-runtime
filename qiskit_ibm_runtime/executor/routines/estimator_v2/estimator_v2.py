@@ -1,0 +1,413 @@
+# This code is part of Qiskit.
+#
+# (C) Copyright IBM 2026.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
+
+"""Executor-based EstimatorV2 primitive."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+import logging
+
+import numpy as np
+from qiskit.primitives.base import BaseEstimatorV2
+from qiskit.primitives.containers.estimator_pub import EstimatorPub, EstimatorPubLike
+from qiskit.providers import BackendV2
+from samplomatic.transpiler import generate_boxing_pass_manager
+from samplomatic import build
+# from qiskit_addon_utils.noise_management.error_mitigation import TREX
+
+from ....runtime_job_v2 import RuntimeJobV2
+from ....executor import Executor
+from ....session import Session
+from ....batch import Batch
+from ....quantum_program import QuantumProgram
+from ....quantum_program.quantum_program import SamplexItem
+from ....quantum_program.datatree import is_datatree_compatible
+from ....options.executor_options import ExecutorOptions
+from ....exceptions import IBMInputValueError
+from ..options.estimator_options import EstimatorOptions
+from .helpers import get_bases, pauli_to_ints
+
+logger = logging.getLogger(__name__)
+
+
+def prepare(
+    pubs: list[EstimatorPub],
+    options: EstimatorOptions,
+    precision: float | None = None,
+) -> tuple[QuantumProgram, ExecutorOptions]:
+    """Convert a list of ``EstimatorPub`` objects to a ``QuantumProgram`` and map options.
+
+    Args:
+        pubs: List of estimator pubs to convert.
+        options: ``EstimatorOptions`` to validate and map to ``ExecutorOptions``.
+        precision: Default precision for expectation value estimates if not specified in pubs.
+
+    Returns:
+        A tuple containing:
+        - :class:`~.QuantumProgram` with :class:`~.SamplexItem` objects for each pub,
+            with passthrough_data configured for
+            :class:`~qiskit_ibm_runtime.executor.routines.estimator_v2.EstimatorV2` post-processing.
+        - :class:`~qiskit_ibm_runtime.options.executor_options.ExecutorOptions` mapped from
+            :class:`~qiskit_ibm_runtime.executor.routines.options.estimator_options.EstimatorOptions`.
+
+    Raises:
+        IBMInputValueError: If precision is not specified or if pubs have mismatched precision.
+    """
+    from ..utils import extract_precision_from_pubs
+
+    # Determine default precision: run parameter takes precedence over options.default_precision
+    default_precision = precision if precision is not None else options.default_precision
+
+    # Extract and validate precision from pubs
+    # This ensures all pubs have the same precision value
+    pub_precision = extract_precision_from_pubs(pubs, default_precision)
+
+    if pub_precision is None:
+        raise IBMInputValueError(
+            "Precision must be specified either in the pubs, in run(), or in EstimatorV2 options."
+        )
+
+    shots = int(np.ceil(1.0 / (pub_precision**2)))
+
+    # Create items
+    items: list[SamplexItem] = []
+    observables_list = []
+    measure_bases_list = []
+
+    boxing_pm = generate_boxing_pass_manager(
+        enable_gates=False,
+        enable_measures=True,
+        measure_annotations="change_basis",
+    )
+
+    for i, pub in enumerate(pubs):
+        logger.info("Processing pub %d/%d", i + 1, len(pubs))
+
+        # Determine measurement bases
+        measure_bases = get_bases(pub.observables)
+
+        # Remove any existing final measurements
+        copied_circuit = pub.circuit.remove_final_measurements(inplace=False)
+
+        # Check for mid-circuit measurements
+        # These will have change basis applied to them in samplomatic.
+        # TODO: Remove change basis annotations from MCM.
+        if copied_circuit.count_ops().get("measure", 0) > 0:
+            raise IBMInputValueError(
+                f"Pub {i} contains mid-circuit measurements, which are not supported"
+                " by EstimatorV2. Only final measurements are allowed."
+            )
+
+        # Add measurements for all qubits
+        # TODO: Optimization - We can measure only the needed qubits.
+        # TODO: Optimization - We can remove the old classical registers which are not needed,
+        # to minimize the returned data.
+        copied_circuit.measure_all()
+
+        # Apply boxing
+        boxed_circuit = boxing_pm.run(copied_circuit)
+        template, samplex = build(boxed_circuit)
+
+        # Prepare samplex_arguments
+        if pub.parameter_values.num_parameters > 0:
+            param_array = pub.parameter_values.as_array()
+            param_shape = param_array.shape[:-1]  # Remove last dimension (num_parameters)
+            samplex_args = {
+                "parameter_values": param_array.reshape(
+                    param_shape + (1, pub.parameter_values.num_parameters)
+                )
+            }
+        else:
+            samplex_args = {}
+            param_shape = ()
+
+        # The item_shape represents the measurement data shape (based on bases, not observables)
+        # Shape: param_shape + (num_bases,)
+        item_shape = param_shape + (len(measure_bases),)
+
+        # Add basis changes to samplex_arguments
+        # The spec name is "basis_changes.{ref}" where ref is generated by the boxing pass manager
+        basis_changes_specs = samplex.inputs().get_specs("basis_changes")
+        basis_changes_name = basis_changes_specs[0].name
+        # Create basis array with shape (num_bases, num_qubits)
+        measure_bases_int = np.array([pauli_to_ints(basis) for basis in measure_bases])
+
+        samplex_arguments = samplex.inputs().make_broadcastable()
+        samplex_arguments.bind(**{**samplex_args, basis_changes_name: measure_bases_int})
+
+        # Create SamplexItem
+        items.append(
+            SamplexItem(
+                circuit=template,
+                samplex=samplex,
+                samplex_arguments=samplex_arguments,
+                shape=item_shape,
+            )
+        )
+
+        # Store data for passthrough
+        observables_list.append(pub.observables.tolist())
+        measure_bases_list.append(measure_bases.to_labels())
+
+    # Collect circuit metadata from each pub
+    circuits_metadata = [pub.circuit.metadata for pub in pubs]
+
+    # Validate that circuit metadata is compatible with DataTree format
+    for idx, metadata in enumerate(circuits_metadata):
+        if metadata is not None and not is_datatree_compatible(metadata):
+            raise IBMInputValueError(
+                f"Circuit metadata at index {idx} is not compatible with DataTree format. "
+                f"Metadata must be a nested structure of lists, dicts (with string keys), "
+                f"numpy arrays, or primitive types (str, int, float, bool, None)."
+            )
+
+    passthrough_data = {
+        "post_processor": {
+            "context": "estimator_v2",
+            "version": "v0.1",
+            "circuits_metadata": circuits_metadata,
+        },
+        "observables": observables_list,
+        "measure_bases": measure_bases_list,
+    }
+
+    # Create QuantumProgram
+    quantum_program = QuantumProgram(
+        shots=shots,
+        items=items,
+        passthrough_data=passthrough_data,
+    )
+
+    # Map options to executor options
+    executor_options = options.to_executor_options()
+
+    return quantum_program, executor_options
+
+
+class EstimatorV2(BaseEstimatorV2):
+    """Executor-based EstimatorV2 primitive for Qiskit Runtime.
+
+    This is an implementation of EstimatorV2 built on top of the Executor primitive,
+    enabling transparent client-side processing with faster feedback loops and greater
+    user control.
+
+    **Limitations:**
+
+    - Circuits must not contain BoxOp instructions
+    - No twirling support in Phase 1
+    - No dynamical decoupling in Phase 1
+    - No error mitigation in Phase 1
+
+    **Custom Prepare Function:**
+
+    You can inject a custom prepare function to replace the default conversion logic
+    from EstimatorPub objects to QuantumProgram. The custom function must have the
+    following signature:
+
+    ```python
+
+        def my_prepare(
+            pubs: list[EstimatorPub],
+            options: EstimatorOptions,
+            shots: int | None = None,
+        ) -> tuple[QuantumProgram, ExecutorOptions]:
+            ...
+    ```
+
+    The custom function can be provided either at initialization via the ``custom_prepare``
+    parameter or later via the ``custom_prepare`` property. Set to ``None`` to restore
+    the default prepare function.
+
+    Example:
+        .. code-block:: python
+
+            from qiskit import QuantumCircuit
+            from qiskit.quantum_info import SparsePauliOp
+            from qiskit_ibm_runtime import QiskitRuntimeService
+            from qiskit_ibm_runtime.executor.routines import EstimatorV2
+
+            service = QiskitRuntimeService()
+            backend = service.least_busy(operational=True, simulator=False)
+
+            # Create a simple circuit
+            circuit = QuantumCircuit(2)
+            circuit.h(0)
+            circuit.cx(0, 1)
+
+            # Define observable
+            observable = SparsePauliOp.from_list([("ZZ", 1), ("XX", 1)])
+
+            # Run the estimator with options
+            estimator = EstimatorV2(mode=backend)
+            estimator.options.default_precision = 0.01
+            estimator.options.execution.init_qubits = True
+            job = estimator.run([(circuit, observable)])
+            result = job.result()
+
+            # Example with custom prepare function
+            def my_prepare(pubs, options, precision=None):
+                # Custom logic here
+                ...
+                return quantum_program, executor_options
+
+            estimator = EstimatorV2(mode=backend, custom_prepare=my_prepare)
+            # Or set it later:
+            # estimator.custom_prepare = my_prepare
+
+    Args:
+        mode: The execution mode used to make the primitive query. It can be:
+
+            * A :class:`~qiskit.providers.BackendV2` if you are using job mode.
+            * A :class:`~qiskit_ibm_runtime.Session` if you are using session execution mode.
+            * A :class:`~qiskit_ibm_runtime.Batch` if you are using batch execution mode.
+
+            Refer to the `Qiskit Runtime documentation
+            <https://quantum.cloud.ibm.com/docs/guides/execution-modes>`_
+            for more information about execution modes.
+
+        options: Estimator options.
+            See
+            :class:`~qiskit_ibm_runtime.executor.routines.options.estimator_options.EstimatorOptions`
+            for all available options.
+        custom_prepare: Optional custom prepare function to replace the default conversion
+            logic. If ``None``, the default function is used.
+    """
+
+    def __init__(
+        self,
+        mode: BackendV2 | Session | Batch | None = None,
+        options: EstimatorOptions | dict | None = None,
+        custom_prepare: (
+            Callable[
+                [list[EstimatorPub], EstimatorOptions, float | None],
+                tuple[QuantumProgram, ExecutorOptions],
+            ]
+            | None
+        ) = None,
+    ):
+        super().__init__()
+
+        self._executor = Executor(mode=mode)
+
+        # Initialize options
+        if options is None:
+            self._options = EstimatorOptions()
+        elif isinstance(options, dict):
+            self._options = EstimatorOptions(**options)
+        else:
+            self._options = options
+
+        # Initialize prepare function
+        self._prepare = custom_prepare if custom_prepare is not None else prepare
+
+    def run(
+        self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None
+    ) -> RuntimeJobV2:
+        """Submit a request to the estimator primitive.
+
+        For moderate and complex workloads, the client-side processing done to map estimator inputs
+        to executor inputs can be resource intensive and cause a delay between invoking the function
+        and the ``job`` being submitted. In order to check the progress of the call, it is
+        recommended to setup logging (with an ``INFO`` level) - see
+        `Qiskit Runtime documentation
+        <https://quantum.cloud.ibm.com/docs/en/api/qiskit-ibm-runtime/runtime-service#logging>`_
+        for more information.
+
+        Args:
+            pubs: An iterable of pub-like objects. For example, a list of circuits
+                  and observables or tuples ``(circuit, observables, parameter_values)``.
+            precision: The target precision for expectation value estimates of each
+                       estimator pub that does not specify its own precision. If ``None``,
+                       the value from ``options.default_precision`` will be used.
+
+        Returns:
+            The submitted job.
+
+        Raises:
+            ValueError: If backend is not provided.
+            IBMInputValueError: If precision is not properly specified.
+        """
+        # Coerce pubs to EstimatorPub objects
+        coerced_pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
+
+        # Determine default precision: run parameter takes precedence over options.default_precision
+        precision = precision if precision is not None else self._options.default_precision
+
+        # Convert pubs to QuantumProgram and map options using the prepare function
+        logger.info("Starting pre-processing")
+        # if mitigation == "TREX":
+        # mitigator = TREX(pubs)
+        # quantum_program = mitigator.prepare()
+        # executor_options = ExecutorOptions()
+        # quantum_program.passthrough_data["post_processor"] = {"context": "trex"},
+        # else:
+        quantum_program, executor_options = self._prepare(coerced_pubs, self._options, precision)
+
+        # Set executor options
+        self._executor.options = executor_options
+
+        # Submit to executor
+        logger.info(
+            "Submitting %d pub%s to executor with %d shots",
+            len(coerced_pubs),
+            "s" if len(coerced_pubs) > 1 else "",
+            quantum_program.shots,
+        )
+
+        return self._executor.run(quantum_program)
+
+    @property
+    def options(self) -> EstimatorOptions:
+        """Return the options.
+
+        Returns:
+            The estimator options.
+        """
+        return self._options
+
+    @property
+    def custom_prepare(
+        self,
+    ) -> Callable[
+        [list[EstimatorPub], EstimatorOptions, float | None],
+        tuple[QuantumProgram, ExecutorOptions],
+    ]:
+        """Return the prepare function.
+
+        Returns:
+            The currently active prepare function.
+        """
+        return self._prepare
+
+    @custom_prepare.setter
+    def custom_prepare(
+        self,
+        fn: (
+            Callable[
+                [list[EstimatorPub], EstimatorOptions, float | None],
+                tuple[QuantumProgram, ExecutorOptions],
+            ]
+            | None
+        ),
+    ) -> None:
+        """Set the prepare function.
+
+        Args:
+            fn: The prepare function to use. Pass None to restore the default prepare function.
+
+        Raises:
+            TypeError: If fn is not None and not callable.
+        """
+        if fn is not None and not callable(fn):
+            raise TypeError(f"custom_prepare must be callable or None, got {type(fn).__name__}")
+        self._prepare = fn if fn is not None else prepare

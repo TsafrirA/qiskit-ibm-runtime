@@ -13,3 +13,4 @@
 """Executor routines."""
 
 from .sampler_v2 import SamplerV2
+from .estimator_v2 import EstimatorV2

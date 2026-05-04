@@ -24,6 +24,7 @@ from qiskit.providers.backend import Backend
 from qiskit.primitives.containers import PrimitiveResult
 from qiskit.primitives.base.base_primitive_job import BasePrimitiveJob
 
+# from qiskit_addon_utils.noise_management.error_mitigation.trex import TREX
 from qiskit_ibm_runtime import qiskit_runtime_service
 from .exceptions import (
     RuntimeJobFailureError,
@@ -169,7 +170,9 @@ class RuntimeJobV2(BasePrimitiveJob[PrimitiveResult, JobStatus], BaseRuntimeJob)
             if isinstance(
                 post_processor_info := result.passthrough_data.get("post_processor"), dict
             ):
-                if post_processor_info.get("context") == "sampler_v2":
+                context = post_processor_info.get("context")
+
+                if context == "sampler_v2":
                     # A post processor must be defined to maintain the contracts.
                     try:
                         version = str(post_processor_info["version"])
@@ -185,6 +188,27 @@ class RuntimeJobV2(BasePrimitiveJob[PrimitiveResult, JobStatus], BaseRuntimeJob)
                         post_processor_fn = SAMPLER_POST_PROCESSORS[version]
                     except KeyError:
                         raise ValueError(f"No post-processor found for version {version}.")
+
+                elif context == "estimator_v2":
+                    # A post processor must be defined to maintain the contracts.
+                    try:
+                        version = str(post_processor_info["version"])
+                    except KeyError:
+                        raise ValueError("Could not determine a post-processor version.")
+
+                    # TODO: Circular import issue. Consider changing file structure.
+                    from .executor.routines.estimator_v2.post_processors import (  # pylint: disable=import-outside-toplevel
+                        ESTIMATOR_POST_PROCESSORS,
+                    )
+
+                    try:
+                        post_processor_fn = ESTIMATOR_POST_PROCESSORS[version]
+                    except KeyError:
+                        raise ValueError(f"No post-processor found for version {version}.")
+
+                # elif context == "trex":
+                #     mitigator = TREX([])
+                #     return mitigator.post_process(result)
 
         # Apply post-processing if we have a processor
         if post_processor_fn:
