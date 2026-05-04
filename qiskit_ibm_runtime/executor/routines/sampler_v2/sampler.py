@@ -34,7 +34,7 @@ from ....batch import Batch
 from ....quantum_program import QuantumProgram, QuantumProgramResult, QuantumProgramItem
 from ....quantum_program.quantum_program import CircuitItem, SamplexItem
 from ....quantum_program.datatree import is_datatree_compatible
-from ....options.executor_options import ExecutorOptions
+from ....options_models.executor_options import ExecutorOptions
 from ....exceptions import IBMInputValueError
 from ..utils import validate_no_boxes, extract_shots_from_pubs, calculate_twirling_shots
 from ..options.sampler_options import SamplerOptions
@@ -48,21 +48,20 @@ def prepare(
     backend: BackendV2,
     default_shots: int | None = None,
 ) -> tuple[QuantumProgram, ExecutorOptions]:
-    """Convert a list of ``SamplerPub`` objects to a ``QuantumProgram`` and map options.
+    """Convert a list of sampler PUBs to a quantum program and map options.
 
     Args:
-        pubs: List of sampler pubs to convert.
+        pubs: List of sampler PUBs to convert.
         options: ``SamplerOptions`` to validate and map to ``ExecutorOptions``.
         backend: Backend to use for dynamical decoupling timing information.
-        default_shots: Default number of shots if not specified in pubs.
+        default_shots: Default number of shots if not specified in PUBs.
 
     Returns:
         A tuple containing:
         - :class:`~.QuantumProgram` with :class:`~.CircuitItem` objects for each pub,
             with passthrough_data configured for
             :class:`~qiskit_ibm_runtime.executor.routines.sampler_v2.SamplerV2` post-processing.
-        - :class:`~qiskit_ibm_runtime.options.executor_options.ExecutorOptions` mapped from
-            :class:`~qiskit_ibm_runtime.executor.routines.options.sampler_options.SamplerOptions`.
+        - :class:`~.ExecutorOptions` mapped from :class:`~.SamplerOptions`.
 
     Raises:
         IBMInputValueError: If circuits contain boxes or if shots are not specified.
@@ -95,7 +94,7 @@ def prepare(
     if not twirling_enabled:
         # No twirling path: validate no boxes, create CircuitItem objects
         for i, pub in enumerate(pubs):
-            logger.info("Processing pub %d/%d", i, len(pubs))
+            logger.info("Processing pub %d/%d", i + 1, len(pubs))
             validate_no_boxes(pub.circuit)
 
             # Apply DD if enabled
@@ -132,7 +131,7 @@ def prepare(
         )
 
         for i, pub in enumerate(pubs):
-            logger.info("Processing pub %d/%d", i, len(pubs))
+            logger.info("Processing pub %d/%d", i + 1, len(pubs))
             boxed_circuit = boxing_pm.run(pub.circuit)
             template_circuit, samplex = build(boxed_circuit)
 
@@ -176,7 +175,6 @@ def prepare(
 
     passthrough_data = {
         "post_processor": {
-            "context": "sampler_v2",
             "version": "v0.1",
             "twirling": options.twirling.enable_gates or options.twirling.enable_measure,
             "meas_type": options.execution.meas_type,
@@ -191,6 +189,7 @@ def prepare(
         passthrough_data=passthrough_data,
         meas_level=options.execution.meas_type,
     )
+    quantum_program._semantic_role = "sampler_v2"
 
     # Map options to executor options
     executor_options = options.to_executor_options()
@@ -207,7 +206,8 @@ class SamplerV2(BaseSamplerV2):
 
     **Limitations:**
 
-    - When twirling is disabled, circuits must not contain BoxOp instructions
+    - When twirling is disabled, circuits must not contain :class:`~qiskit.circuit.BoxOp`
+      instructions.
     - Dynamical decoupling is incompatible with dynamic circuits.
 
     **Custom Prepare Function:**

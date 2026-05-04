@@ -17,7 +17,7 @@ import numpy as np
 
 from samplomatic import Twirl, InjectNoise, build
 
-from ibm_quantum_schemas.executor.version_0_2 import (
+from ibm_quantum_schemas.executor.version_1_0 import (
     QuantumProgramResultModel,
     QuantumProgramResultItemModel,
     ChunkPart,
@@ -35,9 +35,9 @@ from qiskit.quantum_info import PauliLindbladMap
 from qiskit_ibm_runtime.quantum_program import QuantumProgram
 from qiskit_ibm_runtime.quantum_program.quantum_program import CircuitItem, SamplexItem
 from qiskit_ibm_runtime.quantum_program.converters import (
-    quantum_program_to_0_2,
-    quantum_program_result_from_0_2,
-    quantum_program_from_0_2,
+    quantum_program_to_1_0,
+    quantum_program_result_from_1_0,
+    quantum_program_from_1_0,
 )
 from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions, ExecutionOptions
 
@@ -47,8 +47,8 @@ from ....ibm_test_case import IBMTestCase
 class TestQuantumProgramConverters(IBMTestCase):
     """Tests the quantum program converters."""
 
-    def test_quantum_program_to_0_2(self):
-        """Test the function ``quantum_program_to_0_2``."""
+    def test_quantum_program_to_1_0(self):
+        """Test the function ``quantum_program_to_1_0``."""
         shots = 100
 
         noise_models = [
@@ -64,6 +64,7 @@ class TestQuantumProgramConverters(IBMTestCase):
             meas_level=meas_level,
             passthrough_data=passthrough_data,
         )
+        quantum_program._semantic_role = (semantic_role := "sampler-v2")
 
         circuit1 = QuantumCircuit(1)
         circuit1.rx(Parameter("p"), 0)
@@ -95,9 +96,9 @@ class TestQuantumProgramConverters(IBMTestCase):
             execution=ExecutionOptions(init_qubits=False), experimental=experimental_opts
         )
 
-        params_model = quantum_program_to_0_2(quantum_program, options)
+        params_model = quantum_program_to_1_0(quantum_program, options)
 
-        self.assertEqual(params_model.schema_version, "v0.2")
+        self.assertEqual(params_model.schema_version, "v1.0")
         self.assertEqual(params_model.options.init_qubits, False)
         self.assertEqual(params_model.options.rep_delay, None)
         self.assertEqual(params_model.options.experimental, experimental_opts)
@@ -105,11 +106,11 @@ class TestQuantumProgramConverters(IBMTestCase):
         quantum_program_model = params_model.quantum_program
         self.assertEqual(quantum_program_model.shots, shots)
         self.assertEqual(quantum_program_model.passthrough_data, passthrough_data)
+        self.assertEqual(quantum_program_model.semantic_role, semantic_role)
         self.assertEqual(quantum_program_model.meas_level, meas_level)
 
         circuit_item_model = quantum_program_model.items[0]
         self.assertEqual(circuit_item_model.item_type, "circuit")
-        self.assertEqual(circuit_item_model.circuit.to_quantum_circuit(), circuit1)
         self.assertTrue(
             np.array_equal(circuit_item_model.circuit_arguments.to_numpy(), circuit_arguments)
         )
@@ -117,7 +118,6 @@ class TestQuantumProgramConverters(IBMTestCase):
 
         samplex_item_model = quantum_program_model.items[1]
         self.assertEqual(samplex_item_model.item_type, "samplex")
-        self.assertEqual(samplex_item_model.circuit.to_quantum_circuit(), template_circuit)
         self.assertEqual(samplex_item_model.shape, [4, 3, 2])
         self.assertEqual(samplex_item_model.chunk_size, 7)
 
@@ -135,7 +135,9 @@ class TestQuantumProgramConverters(IBMTestCase):
                 noise_model,
             )
 
-    def test_quantum_program_to_0_2_no_argument(self):
+        self.assertEqual(quantum_program_model.circuits.to_python(), [circuit1, template_circuit])
+
+    def test_quantum_program_to_1_0_no_argument(self):
         """Test when there are no circuit arguments, samplex arguments, and chunk size."""
         quantum_program = QuantumProgram(100)
 
@@ -154,7 +156,7 @@ class TestQuantumProgramConverters(IBMTestCase):
             samplex=samplex,
         )
 
-        params_model = quantum_program_to_0_2(quantum_program, ExecutorOptions())
+        params_model = quantum_program_to_1_0(quantum_program, ExecutorOptions())
         quantum_program_model = params_model.quantum_program
 
         circuit_item_model = quantum_program_model.items[0]
@@ -166,8 +168,8 @@ class TestQuantumProgramConverters(IBMTestCase):
         self.assertEqual(samplex_item_model.chunk_size, "auto")
         self.assertEqual(samplex_item_model.samplex_arguments, {})
 
-    def test_quantum_program_result_from_0_2(self):
-        """Test the function ``quantum_program_result_from_0_2``."""
+    def test_quantum_program_result_from_1_0(self):
+        """Test the function ``quantum_program_result_from_1_0``."""
         meas1 = np.array([[False], [True], [True]])
         meas2 = np.array([[True, True], [True, False], [False, False]])
         meas_flips = np.array([[False, False]])
@@ -177,7 +179,10 @@ class TestQuantumProgramConverters(IBMTestCase):
         chunk_model = ChunkSpan(
             start=chunk_start,
             stop=chunk_stop,
-            parts=[ChunkPart(idx_item=0, size=1), ChunkPart(idx_item=1, size=1)],
+            parts=[
+                ChunkPart(idx_item=0, size=1, permutation=[], element_range=(0, 1, 1)),
+                ChunkPart(idx_item=1, size=1, permutation=[], element_range=(0, 1, 1)),
+            ],
         )
         metadata_model = MetadataModel(chunk_timing=[chunk_model])
         result1_model = QuantumProgramResultItemModel(
@@ -208,7 +213,7 @@ class TestQuantumProgramConverters(IBMTestCase):
             passthrough_data=passthrough_data,
         )
 
-        result = quantum_program_result_from_0_2(result_model)
+        result = quantum_program_result_from_1_0(result_model)
 
         self.assertTrue(np.array_equal(result[0]["meas"], meas1))
         self.assertTrue(np.array_equal(result[1]["meas"], meas2))
@@ -244,8 +249,8 @@ class TestQuantumProgramConverters(IBMTestCase):
         options.execution.init_qubits = False
         options.experimental = {"key": "value"}
 
-        params_model = quantum_program_to_0_2(quantum_program, options)
-        quantum_program_out, options_out = quantum_program_from_0_2(params_model)
+        params_model = quantum_program_to_1_0(quantum_program, options)
+        quantum_program_out, options_out = quantum_program_from_1_0(params_model)
 
         assert options_out == options
 

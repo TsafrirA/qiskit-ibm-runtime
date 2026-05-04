@@ -14,7 +14,7 @@
 
 from qiskit.circuit import QuantumCircuit
 from qiskit_ibm_runtime import QuantumProgram
-from qiskit_ibm_runtime.options import ExecutorOptions
+from qiskit_ibm_runtime.options_models import ExecutorOptions
 from qiskit_ibm_runtime.quantum_program.params_converters import QUANTUM_PROGRAM_PARAMS_CONVERTERS
 from ...ibm_test_case import IBMTestCase
 
@@ -22,7 +22,7 @@ from ddt import data, ddt
 
 
 @ddt
-class TestParamConverters(IBMTestCase):
+class TestParamsConverters(IBMTestCase):
     """Tests for ParamConverters."""
 
     @data(*list(QUANTUM_PROGRAM_PARAMS_CONVERTERS))
