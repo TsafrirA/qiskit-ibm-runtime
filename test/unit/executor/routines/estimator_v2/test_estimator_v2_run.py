@@ -27,7 +27,7 @@ from qiskit_ibm_runtime.executor.routines.options.estimator_options import Estim
 from qiskit_ibm_runtime.executor import Executor
 from qiskit_ibm_runtime.runtime_job_v2 import RuntimeJobV2
 from qiskit_ibm_runtime.quantum_program import QuantumProgram
-from qiskit_ibm_runtime.options.executor_options import ExecutorOptions
+from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from qiskit_ibm_runtime.fake_provider import FakeManilaV2
 from qiskit_ibm_runtime.exceptions import IBMInputValueError
 

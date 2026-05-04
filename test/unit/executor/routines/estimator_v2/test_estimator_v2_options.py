@@ -19,7 +19,8 @@ from qiskit_ibm_runtime.executor.routines.options.estimator_options import (
     EstimatorExecutionOptions,
 )
 from qiskit_ibm_runtime.executor.routines.options.environment_options import EnvironmentOptions
-from qiskit_ibm_runtime.options.executor_options import ExecutorOptions, ExecutionOptions
+from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
+from qiskit_ibm_runtime.options_models.execution_options import ExecutionOptions
 
 
 class TestEstimatorExecutionOptions(unittest.TestCase):
@@ -97,11 +98,11 @@ class TestEstimatorOptions(unittest.TestCase):
 
     def test_to_executor_options_with_experimental(self):
         """Test conversion with experimental options."""
-        options = EstimatorOptions(experimental={"image": "custom_image", "other": "value"})
+        options = EstimatorOptions(experimental={"image": "custom:image", "other": "value"})
 
         executor_options = options.to_executor_options()
 
-        self.assertEqual(executor_options.environment.image, "custom_image")
+        self.assertEqual(executor_options.environment.image, "custom:image")
         self.assertEqual(executor_options.experimental.get("other"), "value")
 
     def test_no_twirling_options(self):

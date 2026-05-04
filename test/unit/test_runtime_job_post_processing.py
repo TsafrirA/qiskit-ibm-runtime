@@ -25,6 +25,9 @@ from qiskit_ibm_runtime.quantum_program.quantum_program_result import (
 from qiskit_ibm_runtime.executor.routines.sampler_v2.post_processors import (
     SAMPLER_POST_PROCESSORS,
 )
+from qiskit_ibm_runtime.executor.routines.estimator_v2.post_processors import (
+    ESTIMATOR_POST_PROCESSORS,
+)
 
 
 class TestRuntimeJobPostProcessing(unittest.TestCase):
@@ -45,11 +48,14 @@ class TestRuntimeJobPostProcessing(unittest.TestCase):
         )
 
         # Store original processors to restore later
-        self.original_processors = SAMPLER_POST_PROCESSORS.copy()
+        self.original_sampler_processors = SAMPLER_POST_PROCESSORS.copy()
+        self.original_estimator_processors = ESTIMATOR_POST_PROCESSORS.copy()
 
         # Register generic test post-processors (reusable with any version)
         SAMPLER_POST_PROCESSORS["v0.1"] = self._simple_processor
         SAMPLER_POST_PROCESSORS["failing_version"] = self._failing_processor
+        ESTIMATOR_POST_PROCESSORS["v0.1"] = self._simple_processor
+        ESTIMATOR_POST_PROCESSORS["failing_version"] = self._failing_processor
 
     @staticmethod
     def _simple_processor(qp_result):  # pylint: disable=unused-argument
@@ -65,7 +71,9 @@ class TestRuntimeJobPostProcessing(unittest.TestCase):
         """Clean up test fixtures."""
         # Restore original processors
         SAMPLER_POST_PROCESSORS.clear()
-        SAMPLER_POST_PROCESSORS.update(self.original_processors)
+        SAMPLER_POST_PROCESSORS.update(self.original_sampler_processors)
+        ESTIMATOR_POST_PROCESSORS.clear()
+        ESTIMATOR_POST_PROCESSORS.update(self.original_estimator_processors)
 
     def _create_job(self):
         """Helper to create a RuntimeJobV2 instance."""
@@ -141,3 +149,51 @@ class TestRuntimeJobPostProcessing(unittest.TestCase):
             job._apply_post_processing(qp_result)
 
         self.assertIn("Could not determine a post-processor version", str(context.exception))
+
+    def test_apply_post_processing_estimator_v2(self):
+        """Test post-processing dispatch for estimator_v2 semantic role."""
+        job = self._create_job()
+        qp_result = QuantumProgramResult(
+            data=[{"meas": np.array([[[False, False]]])}],
+            metadata=Metadata(),
+            passthrough_data={"post_processor": {"version": "v0.1"}},
+        )
+        qp_result._semantic_role = "estimator_v2"
+
+        # Apply post-processing - should dispatch to estimator processor
+        processed = job._apply_post_processing(qp_result)
+        self.assertEqual(processed, "processed_result")
+
+    def test_estimator_v2_missing_version(self):
+        """Test that passthrough_data without version raises ValueError for estimator_v2."""
+        job = self._create_job()
+        qp_result = QuantumProgramResult(
+            data=[{"meas": np.array([[[False, False]]])}],
+            metadata=Metadata(),
+            passthrough_data={
+                "post_processor": {}  # Missing "version" field
+            },
+        )
+        qp_result._semantic_role = "estimator_v2"
+
+        # Should raise ValueError since version is required for estimator_v2
+        with self.assertRaises(ValueError) as context:
+            job._apply_post_processing(qp_result)
+
+        self.assertIn("Could not determine a post-processor version", str(context.exception))
+
+    def test_estimator_v2_unsupported_version(self):
+        """Test that unsupported version raises ValueError for estimator_v2."""
+        job = self._create_job()
+        qp_result = QuantumProgramResult(
+            data=[{"meas": np.array([[[False, False]]])}],
+            metadata=Metadata(),
+            passthrough_data={"post_processor": {"version": "unsupported_version"}},
+        )
+        qp_result._semantic_role = "estimator_v2"
+
+        # Should raise ValueError since version is not supported
+        with self.assertRaises(ValueError) as context:
+            job._apply_post_processing(qp_result)
+
+        self.assertIn("No post-processor found for version", str(context.exception))

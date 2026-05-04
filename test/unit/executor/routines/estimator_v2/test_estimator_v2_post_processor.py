@@ -55,7 +55,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None],
             },
@@ -66,6 +65,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         # Run post-processor
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
@@ -99,7 +99,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None],
             },
@@ -110,6 +109,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 
@@ -126,7 +126,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None],
             },
@@ -137,6 +136,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 
@@ -153,7 +153,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None, None],
             },
@@ -164,6 +163,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 
@@ -197,7 +197,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None],
             },
@@ -208,6 +207,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 
@@ -239,7 +239,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
             },
             # Missing observables
@@ -275,7 +274,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [circuit_metadata],
             },
@@ -286,6 +284,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 
@@ -334,7 +333,6 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
         passthrough_data = {
             "post_processor": {
-                "context": "estimator_v2",
                 "version": "v0.1",
                 "circuits_metadata": [None],
             },
@@ -345,6 +343,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         quantum_result = QuantumProgramResult(
             data=result_data, metadata=None, passthrough_data=passthrough_data
         )
+        quantum_result._semantic_role = "estimator_v2"
 
         primitive_result = estimator_v2_post_processor_v0_1(quantum_result)
 

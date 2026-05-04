@@ -32,7 +32,7 @@ from ....batch import Batch
 from ....quantum_program import QuantumProgram
 from ....quantum_program.quantum_program import SamplexItem
 from ....quantum_program.datatree import is_datatree_compatible
-from ....options.executor_options import ExecutorOptions
+from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from ....exceptions import IBMInputValueError
 from ..options.estimator_options import EstimatorOptions
 from .helpers import get_bases, pauli_to_ints
@@ -173,7 +173,6 @@ def prepare(
 
     passthrough_data = {
         "post_processor": {
-            "context": "estimator_v2",
             "version": "v0.1",
             "circuits_metadata": circuits_metadata,
         },
@@ -187,6 +186,9 @@ def prepare(
         items=items,
         passthrough_data=passthrough_data,
     )
+
+    # Set semantic role for post-processing dispatch
+    quantum_program._semantic_role = "estimator_v2"
 
     # Map options to executor options
     executor_options = options.to_executor_options()

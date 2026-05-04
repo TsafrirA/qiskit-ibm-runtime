@@ -190,8 +190,10 @@ class TestPrepareFunction(unittest.TestCase):
         passthrough = quantum_program.passthrough_data
 
         # Verify post_processor metadata
-        self.assertEqual(passthrough["post_processor"]["context"], "estimator_v2")
         self.assertEqual(passthrough["post_processor"]["version"], "v0.1")
+
+        # Verify semantic role is set
+        self.assertEqual(quantum_program._semantic_role, "estimator_v2")
 
         # Verify data lists
         self.assertIsInstance(passthrough["observables"], list)

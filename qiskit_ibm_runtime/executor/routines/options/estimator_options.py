@@ -18,7 +18,8 @@ from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from .environment_options import EnvironmentOptions
-from ....options.executor_options import ExecutorOptions, ExecutionOptions
+from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
+from qiskit_ibm_runtime.options_models.execution_options import ExecutionOptions
 
 
 @dataclass
