@@ -21,9 +21,8 @@ import numpy as np
 from qiskit.primitives.base import BaseEstimatorV2
 from qiskit.primitives.containers.estimator_pub import EstimatorPub, EstimatorPubLike
 from qiskit.providers import BackendV2
-from samplomatic.transpiler import generate_boxing_pass_manager
+from samplomatic.annotations import ChangeBasis
 from samplomatic import build
-# from qiskit_addon_utils.noise_management.error_mitigation import TREX
 
 from ....runtime_job_v2 import RuntimeJobV2
 from ....executor import Executor
@@ -36,6 +35,7 @@ from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from ....exceptions import IBMInputValueError
 from ..options.estimator_options import EstimatorOptions
 from .helpers import get_bases, pauli_to_ints
+from ..utils import resolve_precision
 
 logger = logging.getLogger(__name__)
 
@@ -63,32 +63,22 @@ def prepare(
     Raises:
         IBMInputValueError: If precision is not specified or if pubs have mismatched precision.
     """
-    from ..utils import extract_precision_from_pubs
-
-    # Determine default precision: run parameter takes precedence over options.default_precision
-    default_precision = precision if precision is not None else options.default_precision
-
-    # Extract and validate precision from pubs
-    # This ensures all pubs have the same precision value
-    pub_precision = extract_precision_from_pubs(pubs, default_precision)
+    # Resolve precision using centralized logic with clear precedence
+    pub_precision = resolve_precision(pubs, precision, options.default_precision)
 
     if pub_precision is None:
         raise IBMInputValueError(
-            "Precision must be specified either in the pubs, in run(), or in EstimatorV2 options."
+            "Precision must be specified either in the pubs, in run(), or in EstimatorOptions."
         )
 
+    # Calculate shots from precision using standard error formula:
+    # Standard error = 1/sqrt(shots), therefore shots = 1/precision²
     shots = int(np.ceil(1.0 / (pub_precision**2)))
 
     # Create items
     items: list[SamplexItem] = []
     observables_list = []
     measure_bases_list = []
-
-    boxing_pm = generate_boxing_pass_manager(
-        enable_gates=False,
-        enable_measures=True,
-        measure_annotations="change_basis",
-    )
 
     for i, pub in enumerate(pubs):
         logger.info("Processing pub %d/%d", i + 1, len(pubs))
@@ -99,24 +89,14 @@ def prepare(
         # Remove any existing final measurements
         copied_circuit = pub.circuit.remove_final_measurements(inplace=False)
 
-        # Check for mid-circuit measurements
-        # These will have change basis applied to them in samplomatic.
-        # TODO: Remove change basis annotations from MCM.
-        if copied_circuit.count_ops().get("measure", 0) > 0:
-            raise IBMInputValueError(
-                f"Pub {i} contains mid-circuit measurements, which are not supported"
-                " by EstimatorV2. Only final measurements are allowed."
-            )
-
         # Add measurements for all qubits
         # TODO: Optimization - We can measure only the needed qubits.
         # TODO: Optimization - We can remove the old classical registers which are not needed,
         # to minimize the returned data.
-        copied_circuit.measure_all()
+        with copied_circuit.box([ChangeBasis(ref="change_basis")]):
+            copied_circuit.measure_all()
 
-        # Apply boxing
-        boxed_circuit = boxing_pm.run(copied_circuit)
-        template, samplex = build(boxed_circuit)
+        template, samplex = build(copied_circuit)
 
         # Prepare samplex_arguments
         if pub.parameter_values.num_parameters > 0:
@@ -342,17 +322,8 @@ class EstimatorV2(BaseEstimatorV2):
         # Coerce pubs to EstimatorPub objects
         coerced_pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
 
-        # Determine default precision: run parameter takes precedence over options.default_precision
-        precision = precision if precision is not None else self._options.default_precision
-
         # Convert pubs to QuantumProgram and map options using the prepare function
         logger.info("Starting pre-processing")
-        # if mitigation == "TREX":
-        # mitigator = TREX(pubs)
-        # quantum_program = mitigator.prepare()
-        # executor_options = ExecutorOptions()
-        # quantum_program.passthrough_data["post_processor"] = {"context": "trex"},
-        # else:
         quantum_program, executor_options = self._prepare(coerced_pubs, self._options, precision)
 
         # Set executor options

@@ -213,25 +213,46 @@ class TestPrepareFunction(unittest.TestCase):
         # Verify shape
         self.assertEqual(quantum_program.items[0].shape, (1,))
 
-    def test_prepare_rejects_mid_circuit_measurements(self):
-        """Test that prepare raises error for circuits with mid-circuit measurements."""
+    def test_prepare_with_mid_circuit_measurements(self):
+        """Test that prepare works correctly with circuits containing mid-circuit measurements."""
+        # Create a circuit with mid-circuit measurements
         circuit = QuantumCircuit(3, 3)
         circuit.h(0)
         circuit.cx(0, 1)
         # Add mid-circuit measurement
         circuit.measure(0, 0)
+        # Continue with more gates after measurement
         circuit.h(0)
+        circuit.cx(0, 2)
         circuit.measure_all()
 
         observable = SparsePauliOp.from_list([("ZZZ", 1)])
         pub = EstimatorPub.coerce((circuit, observable))
 
-        # Should raise error due to mid-circuit measurement
-        with self.assertRaises(IBMInputValueError) as context:
-            prepare([pub], self.options, precision=0.03125)
+        # Should not raise an error - mid-circuit measurements are now supported
+        quantum_program, executor_options = prepare([pub], self.options, precision=0.03125)
 
-        self.assertIn("mid-circuit measurements", str(context.exception))
-        self.assertIn("not supported", str(context.exception))
+        # Verify QuantumProgram structure
+        self.assertIsInstance(quantum_program, QuantumProgram)
+        self.assertEqual(quantum_program.shots, 1024)
+        self.assertEqual(len(quantum_program.items), 1)
+
+        # Verify shape
+        item = quantum_program.items[0]
+        self.assertIsInstance(item, SamplexItem)
+        self.assertEqual(item.shape, (1,))
+
+        # Verify the circuit has the expected number of measurements
+        # We expect 1 mid-circuit measurement + 3 from measure_all() = 4 total
+        op_counts = item.circuit.count_ops()
+        self.assertEqual(
+            op_counts.get("measure", 0), 4, "Circuit should have 4 measurement operations"
+        )
+
+        # Verify passthrough data is present
+        self.assertIn("post_processor", quantum_program.passthrough_data)
+        self.assertIn("observables", quantum_program.passthrough_data)
+        self.assertIn("measure_bases", quantum_program.passthrough_data)
 
     def test_prepare_mismatched_precision_raises_error(self):
         """Test that pubs with different precision values raise an error."""

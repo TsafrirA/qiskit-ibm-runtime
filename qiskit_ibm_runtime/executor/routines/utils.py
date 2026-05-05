@@ -111,28 +111,35 @@ def calculate_twirling_shots(
     return num_rand, shots_per_rand
 
 
-def extract_precision_from_pubs(
+def resolve_precision(
     pubs: list[EstimatorPub],
+    run_precision: float | None = None,
     default_precision: float | None = None,
 ) -> float | None:
-    """Extract and validate precision value from a list of ``EstimatorPub`` objects.
+    """Resolve precision from multiple sources with clear precedence.
 
-    This function determines the precision value by examining all pubs and ensures
-    that all pubs have the same precision. If a pub doesn't specify precision,
-    the default_precision value is used.
+    Precedence order (highest to lowest):
+    1. Individual pub precision (must be consistent across all pubs)
+    2. run() method precision parameter (run_precision)
+    3. EstimatorOptions.default_precision (default_precision)
 
     Args:
-        pubs: List of estimator pubs to extract precision from.
-        default_precision: Default precision if not specified in pubs.
+        pubs: List of estimator pubs (may contain precision values).
+        run_precision: Precision specified in run() method.
+        default_precision: Default precision from EstimatorOptions.
 
     Returns:
-        The validated precision value that all pubs share, or None if no precision is specified.
+        The resolved precision value, or None if no precision is specified anywhere.
 
     Raises:
         IBMInputValueError: If pubs have different precision values.
     """
+    # Determine fallback: run parameter takes precedence over options.default_precision
+    fallback_precision = run_precision if run_precision is not None else default_precision
+
+    # Extract precision from pubs, using fallback for pubs without explicit precision
     pub_precisions = {
-        pub.precision if pub.precision is not None else default_precision for pub in pubs
+        pub.precision if pub.precision is not None else fallback_precision for pub in pubs
     }
 
     # Remove None if it's still there (no precision specified anywhere)

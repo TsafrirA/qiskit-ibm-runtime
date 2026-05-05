@@ -26,6 +26,88 @@ from ...helpers import get_pauli_basis, identify_measure_basis, compute_exp_val
 from ..utils import register_post_processor
 
 
+def _broadcast_expectation_values(
+    exp_vals_dict: dict,
+    stds_dict: dict,
+    param_shape: tuple,
+    obs_shape: tuple,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Broadcast expectation values and standard deviations to output shape.
+
+    This function handles broadcasting of parameter and observable shapes to create
+    the final output arrays. It supports all combinations:
+    - Scalar parameters + scalar observables
+    - Scalar parameters + array observables
+    - Array parameters + scalar observables
+    - Array parameters + array observables
+
+    Args:
+        exp_vals_dict: Dictionary mapping observable indices to expectation value arrays
+                      with shape param_shape.
+        stds_dict: Dictionary mapping observable indices to standard deviation arrays
+                  with shape param_shape.
+        param_shape: Shape of parameter sweep (empty tuple for scalar).
+        obs_shape: Shape of observables array (empty tuple for scalar).
+
+    Returns:
+        Tuple of (expectation_values, standard_deviations), each with shape
+        np.broadcast_shapes(param_shape, obs_shape).
+    """
+    output_shape = np.broadcast_shapes(param_shape, obs_shape)
+
+    # Handle the simple scalar case efficiently
+    if param_shape == () and obs_shape == ():
+        # Both scalar: just extract the single values
+        ev = exp_vals_dict[()].item()
+        std = stds_dict[()].item()
+        return np.array(ev), np.array(std)
+
+    # For non-scalar cases, use numpy's advanced indexing
+    evs_array = np.empty(output_shape)
+    stds_array = np.empty(output_shape)
+
+    # Create meshgrid for parameter and observable indices
+    if param_shape == ():
+        # Scalar parameters: all output positions map to the same param index
+        param_indices = np.zeros(output_shape, dtype=int)
+    else:
+        param_indices = np.arange(np.prod(param_shape)).reshape(param_shape)
+        # Broadcast to output shape
+        param_indices = np.broadcast_to(param_indices, output_shape)
+
+    if obs_shape == ():
+        # Scalar observable: all output positions map to the same obs index
+        obs_indices = np.zeros(output_shape, dtype=int)
+    else:
+        obs_indices = np.arange(np.prod(obs_shape)).reshape(obs_shape)
+        # Broadcast to output shape
+        obs_indices = np.broadcast_to(obs_indices, output_shape)
+
+    # Fill output arrays by looking up values from dictionaries
+    for out_idx in np.ndindex(output_shape):
+        p_flat = param_indices[out_idx]
+        o_flat = obs_indices[out_idx]
+
+        # Convert flat indices back to multi-dimensional indices
+        p_idx = np.unravel_index(p_flat, param_shape) if param_shape else ()
+        o_idx = np.unravel_index(o_flat, obs_shape) if obs_shape else ()
+
+        # Look up values from dictionaries
+        ev_array = exp_vals_dict[o_idx]
+        std_array = stds_dict[o_idx]
+
+        # Extract the value at the parameter index
+        if param_shape:
+            evs_array[out_idx] = ev_array[p_idx]
+            stds_array[out_idx] = std_array[p_idx]
+        else:
+            # param_shape is (), so ev_array is a 0-d array
+            evs_array[out_idx] = ev_array.item()
+            stds_array[out_idx] = std_array.item()
+
+    return evs_array, stds_array
+
+
 @register_post_processor("v0.1")
 def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveResult:
     """Convert a quantum program result to a primitives result, for a V2 estimator.
@@ -73,7 +155,7 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
 
     # Validate circuits_metadata length if provided
     circuits_metadata = circuits_metadata or [None] * len(result)
-    if circuits_metadata is not None and len(circuits_metadata) != len(result):
+    if len(circuits_metadata) != len(result):
         raise ValueError(
             f"Number of circuit metadata items ({len(circuits_metadata)}) does not match "
             f"number of pubs ({len(result)})."
@@ -102,7 +184,6 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
 
         # Compute output shape by broadcasting param_shape with obs_shape
         obs_shape = observables.shape
-        output_shape = np.broadcast_shapes(param_shape, obs_shape)
 
         # Compute expectation values for all observables first
         # Each exp_val has shape param_shape
@@ -132,55 +213,10 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
             exp_vals_dict[obs_idx] = exp_val
             stds_dict[obs_idx] = np.sqrt(variance)
 
-        # Now construct output arrays using broadcasting-aware indexing
-        # This unified approach works for all shape combinations:
-        # - Both scalar: param_shape=(), obs_shape=()
-        # - Scalar params: param_shape=(), obs_shape=(n,)
-        # - Scalar obs: param_shape=(m,), obs_shape=()
-        # - Both arrays: param_shape=(m,n), obs_shape=(k,)
-
-        # Create index grids (0-d arrays for scalar shapes, regular arrays otherwise)
-        if param_shape == ():
-            param_grid = np.array(0)  # 0-d array with value 0
-        else:
-            param_grid = np.arange(np.prod(param_shape)).reshape(param_shape)
-
-        if obs_shape == ():
-            obs_grid = np.array(0)  # 0-d array with value 0
-        else:
-            obs_grid = np.arange(np.prod(obs_shape)).reshape(obs_shape)
-
-        # Broadcast grids to output shape
-        param_grid_bc, obs_grid_bc = np.broadcast_arrays(param_grid, obs_grid)
-
-        # Fill output arrays using explicit loop (simpler and more efficient than np.vectorize)
-        evs_array = np.empty(output_shape)
-        stds_array = np.empty(output_shape)
-
-        for out_idx in np.ndindex(output_shape):
-            # Get flat indices for this position
-            p_flat = param_grid_bc[out_idx]
-            o_flat = obs_grid_bc[out_idx]
-
-            # Convert to multi-dimensional indices
-            p_idx = np.unravel_index(int(p_flat), param_shape) if param_shape else ()
-            o_idx = np.unravel_index(int(o_flat), obs_shape) if obs_shape else ()
-
-            # Look up values from dictionaries
-            # exp_vals_dict[o_idx] has shape param_shape
-            ev_array = exp_vals_dict[o_idx]
-            std_array = stds_dict[o_idx]
-
-            # Extract the value at the parameter index
-            # For scalar param_shape, p_idx is () and we need to extract the scalar
-            if param_shape:
-                evs_array[out_idx] = ev_array[p_idx]
-                stds_array[out_idx] = std_array[p_idx]
-            else:
-                # param_shape is (), so ev_array is a 0-d array
-                # Use .item() to extract the scalar value
-                evs_array[out_idx] = ev_array.item()
-                stds_array[out_idx] = std_array.item()
+        # Broadcast expectation values and standard deviations to output shape
+        evs_array, stds_array = _broadcast_expectation_values(
+            exp_vals_dict, stds_dict, param_shape, obs_shape
+        )
 
         data_bin = DataBin(
             evs=evs_array,
