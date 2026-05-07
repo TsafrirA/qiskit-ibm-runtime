@@ -23,6 +23,8 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub, EstimatorPu
 from qiskit.providers import BackendV2
 from samplomatic import build
 from samplomatic.transpiler import generate_boxing_pass_manager
+from qiskit.circuit import ClassicalRegister
+from qiskit.circuit.exceptions import CircuitError
 
 from ....runtime_job_v2 import RuntimeJobV2
 from ....executor import Executor
@@ -36,7 +38,7 @@ from ....exceptions import IBMInputValueError
 from ..options.estimator_options import EstimatorOptions
 from ..options.twirling_options import TwirlingOptions
 from .helpers import get_bases, pauli_to_ints
-from ..utils import resolve_precision
+from ..utils import resolve_precision, calculate_twirling_shots
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ def prepare(
     Args:
         pubs: List of estimator pubs to convert.
         twirling_options: ``TwirlingOptions`` object.
-        shots: The number of shots to use. Could be overridden by
+        shots: The number of shots to use. Will be overridden by
             `num_randomizations * shots_per_randomization` when both are specified explicitly
             and twirling is on.
 
@@ -61,24 +63,16 @@ def prepare(
         :class:`~qiskit_ibm_runtime.executor.routines.estimator_v2.EstimatorV2` post-processing.
 
     Raises:
-        IBMInputValueError: If precision is not specified or if pubs have mismatched precision.
+        IBMInputValueError: If pubs have mismatched precision,
+            if a circuit contains mid-circuit measurements, or if a circuit already uses the
+            reserved classical register name ``wrapper_estimator_data``.
     """
     if twirling_options.enable_gates or twirling_options.enable_measure:
-        num_randomizations = twirling_options.num_randomizations
-        shots_per_randomization = twirling_options.shots_per_randomization
-        # Doesn't obey the order of precedence listed in docs, but follows server code behavior
-        if num_randomizations == "auto" and shots_per_randomization == "auto":
-            shots_per_randomization = int(max(64, int(np.ceil(shots / 32))))
-            num_randomizations = int(np.ceil(shots / shots_per_randomization))
-        elif num_randomizations == "auto":
-            shots_per_randomization = int(shots_per_randomization)
-            num_randomizations = int(np.ceil(shots / shots_per_randomization))
-        elif shots_per_randomization == "auto":
-            num_randomizations = int(num_randomizations)
-            shots_per_randomization = int(np.ceil(shots / num_randomizations))
-        else:
-            num_randomizations = int(num_randomizations)
-            shots_per_randomization = int(shots_per_randomization)
+        num_randomizations, shots_per_randomization = calculate_twirling_shots(
+            shots,
+            twirling_options.num_randomizations,
+            twirling_options.shots_per_randomization,
+        )
     else:
         num_randomizations = 1
         shots_per_randomization = int(shots)
@@ -95,10 +89,10 @@ def prepare(
         measure_bases = get_bases(pub.observables)
 
         # Remove any existing final measurements
-        copied_circuit = pub.circuit.remove_final_measurements(inplace=False)
+        prepared_circuit = pub.circuit.remove_final_measurements(inplace=False)
 
         # TODO: Adjust so change basis is applied only to the last box.
-        if copied_circuit.count_ops().get("measure", 0) > 0:
+        if prepared_circuit.count_ops().get("measure", 0) > 0:
             raise IBMInputValueError(
                 f"Pub {i} contains mid-circuit measurements, which are temporarily not supported"
                 " by EstimatorV2. Only final measurements are allowed."
@@ -107,7 +101,15 @@ def prepare(
         # TODO: Optimization - We can measure only the needed qubits.
         # TODO: Optimization - We can remove the old classical registers which are not needed,
         # to minimize the returned data.
-        copied_circuit.measure_all()
+        creg = ClassicalRegister(prepared_circuit.num_qubits, "wrapper_estimator_data")
+        try:
+            prepared_circuit.add_register(creg)
+        except CircuitError:
+            raise IBMInputValueError(
+                "Name `wrapper_estimator_data` is reserved for a dedicated classical register."
+            )
+
+        prepared_circuit.measure(prepared_circuit.qubits, creg)
 
         boxing_pm = generate_boxing_pass_manager(
             enable_gates=twirling_options.enable_gates,
@@ -115,9 +117,9 @@ def prepare(
             twirling_strategy=twirling_options.strategy.replace("-", "_"),
             measure_annotations="all" if twirling_options.enable_measure else "change_basis",
         )
-        copied_circuit = boxing_pm.run(copied_circuit)
+        prepared_circuit = boxing_pm.run(prepared_circuit)
 
-        template, samplex = build(copied_circuit)
+        template, samplex = build(prepared_circuit)
 
         # Prepare samplex_arguments
         if pub.parameter_values.num_parameters > 0:
@@ -132,7 +134,7 @@ def prepare(
             samplex_args = {}
             param_shape = ()
 
-        # Item shape: param_shape + (num_bases,)
+        # Item shape: (num_randomizations,) + param_shape + (num_bases,)
         item_shape = (num_randomizations,) + param_shape + (len(measure_bases),)
 
         # Add basis changes to samplex_arguments

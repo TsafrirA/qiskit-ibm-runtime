@@ -53,7 +53,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         )
 
         # Create QuantumProgramResult
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         passthrough_data = {
             "post_processor": {
@@ -100,7 +100,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
             ]
         )
 
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         passthrough_data = {
             "post_processor": {
@@ -128,7 +128,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         # Shape: (num_randomizations, num_bases, shots, num_qubits)
         meas_data = np.array([[[[False, False]] * 10]])  # All 00 -> +1
 
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         passthrough_data = {
             "post_processor": {
@@ -156,7 +156,10 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         meas_data_1 = np.array([[[[False, False]] * 10]])
         meas_data_2 = np.array([[[[True, True]] * 10]])
 
-        result_data = [{"meas": meas_data_1}, {"meas": meas_data_2}]
+        result_data = [
+            {"wrapper_estimator_data": meas_data_1},
+            {"wrapper_estimator_data": meas_data_2},
+        ]
 
         passthrough_data = {
             "post_processor": {
@@ -202,7 +205,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
             ]
         )
 
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         passthrough_data = {
             "post_processor": {
@@ -232,7 +235,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
     def test_post_processor_missing_passthrough_data(self):
         """Test post-processor raises error with missing passthrough data."""
-        result_data = [{"meas": np.array([[[False]]])}]
+        result_data = [{"wrapper_estimator_data": np.array([[[False]]])}]
 
         # Missing post_processor in passthrough_data
         quantum_result = QuantumProgramResult(data=result_data, metadata=None, passthrough_data={})
@@ -244,7 +247,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
     def test_post_processor_missing_observables(self):
         """Test post-processor raises error with missing observables."""
-        result_data = [{"meas": np.array([[[False]]])}]
+        result_data = [{"wrapper_estimator_data": np.array([[[False]]])}]
 
         passthrough_data = {
             "post_processor": {
@@ -278,7 +281,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         # Shape: (num_randomizations, num_bases, shots, num_qubits)
         meas_data = np.array([[[[False, False]] * 10]])
 
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         circuit_metadata = {"experiment_id": "test_123", "custom_field": "value"}
 
@@ -328,7 +331,7 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
                 else:  # 11 -> +1
                     meas_data[0, i, j, 0, 0, 0, :, :] = True
 
-        result_data = [{"meas": meas_data}]
+        result_data = [{"wrapper_estimator_data": meas_data}]
 
         # Create 4x3 observables array with checkerboard coefficients
         # Coefficient is +1 if (i+j) is even, -1 if odd

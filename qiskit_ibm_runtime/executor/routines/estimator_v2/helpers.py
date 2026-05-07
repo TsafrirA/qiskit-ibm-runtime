@@ -114,11 +114,17 @@ def get_bases(observables: ObservablesArray) -> PauliList:
         [((np.logical_or.reduce(group.z), np.logical_or.reduce(group.x))) for group in groups]
     )
 
+    # Filter out all-identity bases (where both z and x are all False)
+    non_identity_bases = []
+    for basis in bases:
+        if np.any(basis.z) or np.any(basis.x):
+            non_identity_bases.append(basis)
+
     # Handle identity case
-    if not bases:
+    if not non_identity_bases:
         raise ValueError("No measurement bases found. Only identity in the observables.")
 
-    return bases
+    return PauliList(non_identity_bases)
 
 
 def project_to_z(term: str) -> np.ndarray:

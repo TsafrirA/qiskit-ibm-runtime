@@ -220,6 +220,13 @@ class TestGetBases(unittest.TestCase):
         self.assertIn(Pauli("YII"), result)
         self.assertIn(Pauli("XII"), result)
 
+    def test_all_identity_observable(self):
+        """Test with all-identity observable."""
+        observables = ObservablesArray.coerce([{"III": 1.0}])
+        with self.assertRaises(ValueError) as context:
+            get_bases(observables)
+        self.assertIn("Only identity", str(context.exception))
+
 
 class TestProjectToZ(unittest.TestCase):
     """Tests for project_to_z function."""
