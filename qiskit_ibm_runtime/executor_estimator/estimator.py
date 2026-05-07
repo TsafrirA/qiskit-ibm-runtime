@@ -29,7 +29,7 @@ from ..batch import Batch
 from ..quantum_program import QuantumProgram
 from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from ..options_models.estimator_options import EstimatorOptions
-from ..executor_sampler.utils import resolve_precision
+from .utils import resolve_precision
 from .prepare import prepare
 
 logger = logging.getLogger(__name__)
