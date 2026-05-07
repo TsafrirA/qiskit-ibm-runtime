@@ -22,7 +22,7 @@ from qiskit.quantum_info import PauliList, Pauli
 
 from ...quantum_program.quantum_program_result import QuantumProgramResult
 from ...utils.estimator_pub_result import EstimatorPubResult
-from ..helpers import get_pauli_basis, identify_measure_basis, compute_exp_val
+from ..utils import get_pauli_basis, identify_measure_basis, compute_exp_val
 from .registry import register_post_processor
 
 

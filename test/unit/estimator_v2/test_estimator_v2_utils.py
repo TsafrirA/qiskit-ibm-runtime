@@ -17,7 +17,7 @@ import numpy as np
 from qiskit.quantum_info import Pauli
 from qiskit.primitives.containers.estimator_pub import ObservablesArray
 
-from qiskit_ibm_runtime.executor_estimator.helpers import (
+from qiskit_ibm_runtime.executor_estimator.utils import (
     get_pauli_basis,
     pauli_to_ints,
     get_bases,

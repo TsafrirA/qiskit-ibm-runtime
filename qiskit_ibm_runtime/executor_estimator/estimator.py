@@ -37,7 +37,7 @@ from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from ..exceptions import IBMInputValueError
 from ..options_models.estimator_options import EstimatorOptions
 from ..options_models.twirling_options import TwirlingOptions
-from .helpers import get_bases, pauli_to_ints
+from .utils import get_bases, pauli_to_ints
 from ..executor_sampler.utils import resolve_precision, calculate_twirling_shots
 
 logger = logging.getLogger(__name__)
