@@ -23,7 +23,7 @@ from qiskit.primitives.containers.estimator_pub import EstimatorPub, Observables
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit import ClassicalRegister
 
-from qiskit_ibm_runtime.executor_estimator.estimator import prepare
+from qiskit_ibm_runtime.executor_estimator.prepare import prepare
 from qiskit_ibm_runtime.options_models.estimator_options import EstimatorOptions
 from qiskit_ibm_runtime.quantum_program import QuantumProgram
 from qiskit_ibm_runtime.quantum_program.quantum_program import SamplexItem
@@ -99,7 +99,7 @@ class TestPrepareFunction(unittest.TestCase):
         self.assertEqual(len(passthrough["measure_bases"][0]), 3)
         self.assertEqual(len(passthrough["measure_bases"][1]), 2)
 
-    @patch("qiskit_ibm_runtime.executor_estimator.estimator.generate_boxing_pass_manager")
+    @patch("qiskit_ibm_runtime.executor_estimator.prepare.generate_boxing_pass_manager")
     def test_prepare_passes_twirling_values_to_boxing_pass_manager(self, mock_generate_boxing_pm):
         """Test that boxing pass manager receives the expected twirling values."""
         mock_boxing_pm = MagicMock()
@@ -124,7 +124,7 @@ class TestPrepareFunction(unittest.TestCase):
         mock_samplex.inputs.return_value.make_broadcastable.return_value = MagicMock()
 
         with patch(
-            "qiskit_ibm_runtime.executor_estimator.estimator.build",
+            "qiskit_ibm_runtime.executor_estimator.prepare.build",
             return_value=(circuit, mock_samplex),
         ):
             prepare([pub], options.twirling, 1024)
