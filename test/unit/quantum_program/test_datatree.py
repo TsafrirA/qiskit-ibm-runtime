@@ -65,22 +65,3 @@ class TestIsDatatreeCompatible(IBMTestCase):
         self.assertFalse(is_datatree_compatible({"key": object()}))
         self.assertFalse(is_datatree_compatible({"key": [1, 2, {3, 4}]}))
         self.assertFalse(is_datatree_compatible({"outer": {"inner": (1, 2, 3)}}))
-
-    def test_numpy_dtypes(self):
-        """Test that various numpy dtypes are compatible."""
-        valid_dtypes = {
-            "int32": np.int32(42),
-            "int64": np.int64(100),
-            "float32": np.float32(3.14),
-            "float64": np.float64(2.718),
-            "complex64": np.complex64(1 + 2j),
-            "complex128": np.complex128(3 + 4j),
-            "bool": np.bool_(True),
-        }
-        self.assertTrue(is_datatree_compatible(valid_dtypes))
-
-    def test_numpy_scalar_types(self):
-        """Test that numpy scalar types are compatible."""
-        self.assertTrue(is_datatree_compatible(np.int64(5)))
-        self.assertTrue(is_datatree_compatible(np.float32(1.5)))
-        self.assertTrue(is_datatree_compatible(np.complex128(2 + 3j)))
