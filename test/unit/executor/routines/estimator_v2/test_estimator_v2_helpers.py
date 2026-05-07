@@ -409,179 +409,190 @@ class TestComputeExpVal(unittest.TestCase):
     def test_all_zeros_z_basis(self):
         """Test expectation value for all zeros in Z basis."""
         # ZZZ observable, all measurements are 000
-        datum = np.array([[[False, False, False]] * 10])  # 10 shots, all 000
-        exp_val, std = compute_exp_val("ZZZ", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=3)
+        datum = np.array([[[[False, False, False]] * 10]])
+        exp_val, variance = compute_exp_val("ZZZ", datum)
         # All eigenvalues are +1, so expectation value is 1.0
         np.testing.assert_almost_equal(exp_val, 1.0)
-        # Standard deviation should be 0 (no variance)
-        np.testing.assert_almost_equal(std, 0.0)
+        # Variance should be 0 (no variance)
+        np.testing.assert_almost_equal(variance, 0.0)
 
     def test_all_ones_z_basis(self):
         """Test expectation value for all ones in Z basis."""
         # ZZZ observable, all measurements are 111
-        datum = np.array([[[True, True, True]] * 10])  # 10 shots, all 111
-        exp_val, std = compute_exp_val("ZZZ", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=3)
+        datum = np.array([[[[True, True, True]] * 10]])
+        exp_val, variance = compute_exp_val("ZZZ", datum)
         # All eigenvalues are -1, so expectation value is -1.0
         np.testing.assert_almost_equal(exp_val, -1.0)
-        # Standard deviation should be 0 (no variance)
-        np.testing.assert_almost_equal(std, 0.0)
+        # Variance should be 0 (no variance)
+        np.testing.assert_almost_equal(variance, 0.0)
 
     def test_mixed_measurements(self):
         """Test expectation value for mixed measurements."""
         # Z observable on single qubit, 5 zeros and 5 ones
-        datum = np.array([[[False]] * 5 + [[True]] * 5])  # 10 shots
-        exp_val, std = compute_exp_val("Z", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
+        datum = np.array([[[[False]] * 5 + [[True]] * 5]])
+        exp_val, variance = compute_exp_val("Z", datum)
         # 5 * (+1) + 5 * (-1) = 0, so expectation value is 0.0
         np.testing.assert_almost_equal(exp_val, 0.0)
-        # Standard deviation should be non-zero (has variance)
-        self.assertGreater(std, 0.0)
+        # Variance should be non-zero
+        self.assertGreater(variance, 0.0)
 
     def test_identity_observable(self):
         """Test expectation value for identity observable."""
         # I observable, any measurements
-        datum = np.array([[[False]] * 5 + [[True]] * 5])  # 10 shots
-        exp_val, std = compute_exp_val("I", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
+        datum = np.array([[[[False]] * 5 + [[True]] * 5]])
+        exp_val, variance = compute_exp_val("I", datum)
         # Identity always gives +1
         np.testing.assert_almost_equal(exp_val, 1.0)
-        # Standard deviation should be 0 (no variance)
-        np.testing.assert_almost_equal(std, 0.0)
+        # Variance should be 0 (no variance)
+        np.testing.assert_almost_equal(variance, 0.0)
 
     def test_projector_zero(self):
         """Test expectation value for projector |0><0|."""
         # Projector on |0> state
-        datum = np.array([[[False]] * 7 + [[True]] * 3])  # 7 zeros, 3 ones
-        exp_val, std = compute_exp_val("0", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
+        datum = np.array([[[[False]] * 7 + [[True]] * 3]])
+        exp_val, variance = compute_exp_val("0", datum)
         # Only zeros contribute, 7/10 = 0.7
         np.testing.assert_almost_equal(exp_val, 0.7)
-        # Standard deviation should be non-zero (has variance)
-        self.assertGreater(std, 0.0)
+        # Variance should be non-zero
+        self.assertGreater(variance, 0.0)
 
     def test_projector_one(self):
         """Test expectation value for projector |1><1|."""
         # Projector on |1> state
-        datum = np.array([[[False]] * 3 + [[True]] * 7])  # 3 zeros, 7 ones
-        exp_val, std = compute_exp_val("1", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
+        datum = np.array([[[[False]] * 3 + [[True]] * 7]])
+        exp_val, variance = compute_exp_val("1", datum)
         # Only ones contribute, 7/10 = 0.7
         np.testing.assert_almost_equal(exp_val, 0.7)
-        # Standard deviation should be non-zero (has variance)
-        self.assertGreater(std, 0.0)
+        # Variance should be non-zero
+        self.assertGreater(variance, 0.0)
 
     def test_multi_qubit_observable(self):
         """Test expectation value for multi-qubit observable."""
         # ZZ observable, measurements: 00, 01, 10, 11 (equal distribution)
 
     def test_std_calculation_known_variance(self):
-        """Test standard deviation calculation with known variance."""
+        """Test variance calculation with known variance."""
         # Z observable with 50/50 split between +1 and -1 eigenvalues
-        # This gives variance = 1, so std = sqrt(1/shots)
-        shots = 100
-        datum = np.array([[[False]] * 50 + [[True]] * 50])  # 50 zeros, 50 ones
-        exp_val, std = compute_exp_val("Z", datum)
+        # This gives variance = 1
+        # Shape: (num_randomizations=1, shots_per_randomization=100, num_qubits=1)
+        datum = np.array([[[[False]] * 50 + [[True]] * 50]])
+        exp_val, variance = compute_exp_val("Z", datum)
 
         # Expectation value should be 0
         np.testing.assert_almost_equal(exp_val, 0.0)
 
         # For eigenvalues ±1 with equal probability:
         # variance = E[X²] - E[X]² = 1 - 0 = 1
-        # std = sqrt(variance / shots) = sqrt(1 / 100) = 0.1
-        expected_std = np.sqrt(1.0 / shots)
-        np.testing.assert_almost_equal(std, expected_std, decimal=10)
+        expected_variance = 1.0
+        np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
 
     def test_std_calculation_projector_variance(self):
-        """Test standard deviation for projector with known variance."""
+        """Test variance calculation for projector with known variance."""
         # Projector |0><0| with 70% zeros, 30% ones
         # Eigenvalues: 1 for zeros, 0 for ones
         # Mean = 0.7, variance = E[X²] - E[X]² = 0.7 - 0.49 = 0.21
-        shots = 100
-        datum = np.array([[[False]] * 70 + [[True]] * 30])
-        exp_val, std = compute_exp_val("0", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=100, num_qubits=1)
+        datum = np.array([[[[False]] * 70 + [[True]] * 30]])
+        exp_val, variance = compute_exp_val("0", datum)
 
         np.testing.assert_almost_equal(exp_val, 0.7)
 
-        # variance = 0.7 * (1 - 0.7) = 0.21
-        # std = sqrt(0.21 / 100) = sqrt(0.0021)
-        expected_variance = 0.7 * 0.3
-        expected_std = np.sqrt(expected_variance / shots)
-        np.testing.assert_almost_equal(std, expected_std, decimal=10)
+        # variance = E[X²] - E[X]² = 0.7 - 0.49 = 0.21
+        expected_variance = 0.7 - 0.49
+        np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
 
     def test_std_multi_qubit_with_variance(self):
-        """Test standard deviation for multi-qubit observable with variance."""
+        """Test variance calculation for multi-qubit observable with variance."""
         # ZZ observable with specific distribution
         # 00 -> +1, 01 -> -1, 10 -> -1, 11 -> +1
         # 10 shots: 3x(00), 2x(01), 2x(10), 3x(11)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=2)
         datum = np.array(
-            [[False, False]] * 3  # 00 -> +1
-            + [[False, True]] * 2  # 01 -> -1
-            + [[True, False]] * 2  # 10 -> -1
-            + [[True, True]] * 3  # 11 -> +1
+            [
+                [
+                    [[False, False]] * 3  # 00 -> +1
+                    + [[False, True]] * 2  # 01 -> -1
+                    + [[True, False]] * 2  # 10 -> -1
+                    + [[True, True]] * 3  # 11 -> +1
+                ]
+            ]
         )
-        exp_val, std = compute_exp_val("ZZ", datum)
+        exp_val, variance = compute_exp_val("ZZ", datum)
 
         # Mean = (3*1 + 2*(-1) + 2*(-1) + 3*1) / 10 = 2/10 = 0.2
         np.testing.assert_almost_equal(exp_val, 0.2)
 
         # E[X²] = (3*1 + 2*1 + 2*1 + 3*1) / 10 = 10/10 = 1.0
         # variance = 1.0 - 0.04 = 0.96
-        # std = sqrt(0.96 / 10)
         expected_variance = 1.0 - 0.04
-        expected_std = np.sqrt(expected_variance / 10)
-        np.testing.assert_almost_equal(std, expected_std, decimal=10)
+        np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
 
     def test_std_with_parameter_sweep(self):
-        """Test standard deviation with parameter sweep dimensions."""
-        # Test with shape (param_sweep, shots, num_qubits)
-        # 2 parameter values, 10 shots each, 1 qubit
+        """Test variance calculation with parameter sweep dimensions."""
+        # Test with shape (num_randomizations, param_sweep, shots_per_randomization, num_qubits)
+        # 1 randomization, 2 parameter values, 10 shots each, 1 qubit
         datum = np.array(
             [
-                [[False]] * 8 + [[True]] * 2,  # First param: 80% zeros
-                [[False]] * 5 + [[True]] * 5,  # Second param: 50% zeros
+                [
+                    [[False]] * 8 + [[True]] * 2,  # First param: 80% zeros
+                    [[False]] * 5 + [[True]] * 5,  # Second param: 50% zeros
+                ]
             ]
         )
-        exp_vals, stds = compute_exp_val("Z", datum)
+        exp_vals, variances = compute_exp_val("Z", datum)
 
         # Check shapes
         self.assertEqual(exp_vals.shape, (2,))
-        self.assertEqual(stds.shape, (2,))
+        self.assertEqual(variances.shape, (2,))
 
         # First parameter: 8 zeros (+1) and 2 ones (-1)
         # mean = (8*1 + 2*(-1))/10 = 0.6
         # E[X²] = (8*1² + 2*(-1)²)/10 = 1.0
         # variance = 1.0 - 0.36 = 0.64
-        # std = sqrt(0.64 / 10)
         np.testing.assert_almost_equal(exp_vals[0], 0.6)
-        expected_std_0 = np.sqrt(0.64 / 10)
-        np.testing.assert_almost_equal(stds[0], expected_std_0, decimal=10)
+        expected_variance_0 = 0.64
+        np.testing.assert_almost_equal(variances[0], expected_variance_0, decimal=10)
 
         # Second parameter: 5 zeros (+1) and 5 ones (-1)
         # mean = 0.0
         # E[X²] = 1.0
         # variance = 1.0 - 0.0 = 1.0
-        # std = sqrt(1.0 / 10)
         np.testing.assert_almost_equal(exp_vals[1], 0.0)
-        expected_std_1 = np.sqrt(1.0 / 10)
-        np.testing.assert_almost_equal(stds[1], expected_std_1, decimal=10)
+        expected_variance_1 = 1.0
+        np.testing.assert_almost_equal(variances[1], expected_variance_1, decimal=10)
 
     def test_std_projector_all_filtered(self):
-        """Test std when projector filters out all measurements."""
+        """Test variance when projector filters out all measurements."""
         # Projector |0><0| but all measurements are |1>
-        datum = np.array([[[True]] * 10])  # All ones
-        exp_val, std = compute_exp_val("0", datum)
+        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
+        datum = np.array([[[[True]] * 10]])
+        exp_val, variance = compute_exp_val("0", datum)
 
         # All measurements filtered out, so exp_val = 0
         np.testing.assert_almost_equal(exp_val, 0.0)
-        # std should also be 0 (no variance when all are filtered)
-        np.testing.assert_almost_equal(std, 0.0)
-        # Shape should be (shots, num_qubits)
+        # variance should also be 0 (no variance when all are filtered)
+        np.testing.assert_almost_equal(variance, 0.0)
+        # Shape: (num_randomizations=1, shots_per_randomization=4, num_qubits=2)
         datum = np.array(
             [
-                [False, False],  # 00 -> +1
-                [False, True],  # 01 -> -1
-                [True, False],  # 10 -> -1
-                [True, True],  # 11 -> +1
+                [
+                    [
+                        [False, False],  # 00 -> +1
+                        [False, True],  # 01 -> -1
+                        [True, False],  # 10 -> -1
+                        [True, True],  # 11 -> +1
+                    ]
+                ]
             ]
         )
-        exp_val, std = compute_exp_val("ZZ", datum)
+        exp_val, variance = compute_exp_val("ZZ", datum)
         # (+1 - 1 - 1 + 1) / 4 = 0
         np.testing.assert_almost_equal(exp_val, 0.0)
-        # Standard deviation should be non-zero (has variance)
-        self.assertGreater(std, 0.0)
+        # Variance should be non-zero (has variance)
+        self.assertGreater(variance, 0.0)

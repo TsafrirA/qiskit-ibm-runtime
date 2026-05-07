@@ -18,6 +18,7 @@ from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from .environment_options import EnvironmentOptions
+from .twirling_options import TwirlingOptions
 from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from qiskit_ibm_runtime.options_models.execution_options import ExecutionOptions
 
@@ -57,10 +58,34 @@ class EstimatorOptions:
     """The default precision for expectation value estimates if not specified in the PUBs
     or in the run method."""
 
+    default_shots: int | None = None
+    """The total number of shots to use per circuit per configuration.
+
+    .. note::
+        If set, this value overrides :attr:`~default_precision`.
+
+    A configuration is a combination of a specific parameter value binding set and a
+    physical measurement basis. A physical measurement basis groups together some
+    collection of qubit-wise commuting observables for some specific circuit/parameter
+    value set to create a single measurement with basis rotations that is inserted into
+    hardware executions.
+
+    If twirling is enabled, the value of this option will be divided over circuit
+    randomizations, with a smaller number of shots per randomization. See the
+    :attr:`~twirling` options.
+    """
+
     execution: EstimatorExecutionOptions = Field(default_factory=EstimatorExecutionOptions)
     """Execution options.
 
     See :class:`.EstimatorExecutionOptions` for all available options."""
+
+    twirling: TwirlingOptions = Field(default_factory=TwirlingOptions)
+    """Twirling options.
+
+    Currently only enable_measure=False is supported.
+
+    See :class:`.TwirlingOptions` for all available options."""
 
     experimental: dict | None = None
     """Experimental options."""
@@ -84,7 +109,7 @@ class EstimatorOptions:
         executor_options.environment.max_execution_time = self.max_execution_time
 
         if self.experimental:
-            executor_options.environment.image = self.experimental.pop("image", None)
+            executor_options.environment.image = self.experimental.get("image", None)
             executor_options.experimental.update(self.experimental)
 
         return executor_options

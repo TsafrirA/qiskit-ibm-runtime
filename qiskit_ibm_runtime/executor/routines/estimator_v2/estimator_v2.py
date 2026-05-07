@@ -21,8 +21,8 @@ import numpy as np
 from qiskit.primitives.base import BaseEstimatorV2
 from qiskit.primitives.containers.estimator_pub import EstimatorPub, EstimatorPubLike
 from qiskit.providers import BackendV2
-from samplomatic.annotations import ChangeBasis
 from samplomatic import build
+from samplomatic.transpiler import generate_boxing_pass_manager
 
 from ....runtime_job_v2 import RuntimeJobV2
 from ....executor import Executor
@@ -34,6 +34,7 @@ from ....quantum_program.datatree import is_datatree_compatible
 from qiskit_ibm_runtime.options_models.executor_options import ExecutorOptions
 from ....exceptions import IBMInputValueError
 from ..options.estimator_options import EstimatorOptions
+from ..options.twirling_options import TwirlingOptions
 from .helpers import get_bases, pauli_to_ints
 from ..utils import resolve_precision
 
@@ -42,38 +43,45 @@ logger = logging.getLogger(__name__)
 
 def prepare(
     pubs: list[EstimatorPub],
-    options: EstimatorOptions,
-    precision: float | None = None,
-) -> tuple[QuantumProgram, ExecutorOptions]:
-    """Convert a list of ``EstimatorPub`` objects to a ``QuantumProgram`` and map options.
+    twirling_options: TwirlingOptions,
+    shots: int,
+) -> QuantumProgram:
+    """Convert a list of ``EstimatorPub`` objects to a ``QuantumProgram``.
 
     Args:
         pubs: List of estimator pubs to convert.
-        options: ``EstimatorOptions`` to validate and map to ``ExecutorOptions``.
-        precision: Default precision for expectation value estimates if not specified in pubs.
+        twirling_options: ``TwirlingOptions`` object.
+        shots: The number of shots to use. Could be overridden by
+            `num_randomizations * shots_per_randomization` when both are specified explicitly
+            and twirling is on.
 
     Returns:
-        A tuple containing:
-        - :class:`~.QuantumProgram` with :class:`~.SamplexItem` objects for each pub,
-            with passthrough_data configured for
-            :class:`~qiskit_ibm_runtime.executor.routines.estimator_v2.EstimatorV2` post-processing.
-        - :class:`~qiskit_ibm_runtime.options.executor_options.ExecutorOptions` mapped from
-            :class:`~qiskit_ibm_runtime.executor.routines.options.estimator_options.EstimatorOptions`.
+        :class:`~.QuantumProgram` with :class:`~.SamplexItem` objects for each pub,
+        with passthrough_data configured for
+        :class:`~qiskit_ibm_runtime.executor.routines.estimator_v2.EstimatorV2` post-processing.
 
     Raises:
         IBMInputValueError: If precision is not specified or if pubs have mismatched precision.
     """
-    # Resolve precision using centralized logic with clear precedence
-    pub_precision = resolve_precision(pubs, precision, options.default_precision)
-
-    if pub_precision is None:
-        raise IBMInputValueError(
-            "Precision must be specified either in the pubs, in run(), or in EstimatorOptions."
-        )
-
-    # Calculate shots from precision using standard error formula:
-    # Standard error = 1/sqrt(shots), therefore shots = 1/precision²
-    shots = int(np.ceil(1.0 / (pub_precision**2)))
+    if twirling_options.enable_gates or twirling_options.enable_measure:
+        num_randomizations = twirling_options.num_randomizations
+        shots_per_randomization = twirling_options.shots_per_randomization
+        # Doesn't obey the order of precedence listed in docs, but follows server code behavior
+        if num_randomizations == "auto" and shots_per_randomization == "auto":
+            shots_per_randomization = int(max(64, int(np.ceil(shots / 32))))
+            num_randomizations = int(np.ceil(shots / shots_per_randomization))
+        elif num_randomizations == "auto":
+            shots_per_randomization = int(shots_per_randomization)
+            num_randomizations = int(np.ceil(shots / shots_per_randomization))
+        elif shots_per_randomization == "auto":
+            num_randomizations = int(num_randomizations)
+            shots_per_randomization = int(np.ceil(shots / num_randomizations))
+        else:
+            num_randomizations = int(num_randomizations)
+            shots_per_randomization = int(shots_per_randomization)
+    else:
+        num_randomizations = 1
+        shots_per_randomization = int(shots)
 
     # Create items
     items: list[SamplexItem] = []
@@ -89,19 +97,32 @@ def prepare(
         # Remove any existing final measurements
         copied_circuit = pub.circuit.remove_final_measurements(inplace=False)
 
-        # Add measurements for all qubits
+        # TODO: Adjust so change basis is applied only to the last box.
+        if copied_circuit.count_ops().get("measure", 0) > 0:
+            raise IBMInputValueError(
+                f"Pub {i} contains mid-circuit measurements, which are temporarily not supported"
+                " by EstimatorV2. Only final measurements are allowed."
+            )
+
         # TODO: Optimization - We can measure only the needed qubits.
         # TODO: Optimization - We can remove the old classical registers which are not needed,
         # to minimize the returned data.
-        with copied_circuit.box([ChangeBasis(ref="change_basis")]):
-            copied_circuit.measure_all()
+        copied_circuit.measure_all()
+
+        boxing_pm = generate_boxing_pass_manager(
+            enable_gates=twirling_options.enable_gates,
+            enable_measures=True,
+            twirling_strategy=twirling_options.strategy.replace("-", "_"),
+            measure_annotations="all" if twirling_options.enable_measure else "change_basis",
+        )
+        copied_circuit = boxing_pm.run(copied_circuit)
 
         template, samplex = build(copied_circuit)
 
         # Prepare samplex_arguments
         if pub.parameter_values.num_parameters > 0:
             param_array = pub.parameter_values.as_array()
-            param_shape = param_array.shape[:-1]  # Remove last dimension (num_parameters)
+            param_shape = pub.parameter_values.shape
             samplex_args = {
                 "parameter_values": param_array.reshape(
                     param_shape + (1, pub.parameter_values.num_parameters)
@@ -111,12 +132,10 @@ def prepare(
             samplex_args = {}
             param_shape = ()
 
-        # The item_shape represents the measurement data shape (based on bases, not observables)
-        # Shape: param_shape + (num_bases,)
-        item_shape = param_shape + (len(measure_bases),)
+        # Item shape: param_shape + (num_bases,)
+        item_shape = (num_randomizations,) + param_shape + (len(measure_bases),)
 
         # Add basis changes to samplex_arguments
-        # The spec name is "basis_changes.{ref}" where ref is generated by the boxing pass manager
         basis_changes_specs = samplex.inputs().get_specs("basis_changes")
         basis_changes_name = basis_changes_specs[0].name
         # Create basis array with shape (num_bases, num_qubits)
@@ -162,7 +181,7 @@ def prepare(
 
     # Create QuantumProgram
     quantum_program = QuantumProgram(
-        shots=shots,
+        shots=shots_per_randomization,
         items=items,
         passthrough_data=passthrough_data,
     )
@@ -170,10 +189,7 @@ def prepare(
     # Set semantic role for post-processing dispatch
     quantum_program._semantic_role = "estimator_v2"
 
-    # Map options to executor options
-    executor_options = options.to_executor_options()
-
-    return quantum_program, executor_options
+    return quantum_program
 
 
 class EstimatorV2(BaseEstimatorV2):
@@ -289,8 +305,7 @@ class EstimatorV2(BaseEstimatorV2):
         else:
             self._options = options
 
-        # Initialize prepare function
-        self._prepare = custom_prepare if custom_prepare is not None else prepare
+        self._custom_prepare = custom_prepare
 
     def run(
         self, pubs: Iterable[EstimatorPubLike], *, precision: float | None = None
@@ -317,14 +332,32 @@ class EstimatorV2(BaseEstimatorV2):
 
         Raises:
             ValueError: If backend is not provided.
-            IBMInputValueError: If precision is not properly specified.
+            IBMInputValueError: If precision is not properly specified or if unsupported
+                options are detected.
         """
         # Coerce pubs to EstimatorPub objects
         coerced_pubs = [EstimatorPub.coerce(pub, precision) for pub in pubs]
 
-        # Convert pubs to QuantumProgram and map options using the prepare function
+        # Convert pubs to QuantumProgram and map options using the selected prepare function
         logger.info("Starting pre-processing")
-        quantum_program, executor_options = self._prepare(coerced_pubs, self._options, precision)
+
+        # Use the correct prepare function
+        if self._custom_prepare is not None:
+            # Use custom prepare function without validation
+            quantum_program, executor_options = self._custom_prepare(
+                coerced_pubs, self._options, precision
+            )
+        else:
+            resolved_precision = resolve_precision(coerced_pubs, precision)
+            if resolved_precision is not None:
+                shots = int(np.ceil(1.0 / (resolved_precision**2)))
+            elif self.options.default_shots is not None:
+                shots = int(self.options.default_shots)
+            else:
+                shots = int(np.ceil(1.0 / (self.options.default_precision**2)))
+
+            quantum_program = prepare(coerced_pubs, self.options.twirling, shots)
+            executor_options = self.options.to_executor_options()
 
         # Set executor options
         self._executor.options = executor_options
@@ -351,16 +384,19 @@ class EstimatorV2(BaseEstimatorV2):
     @property
     def custom_prepare(
         self,
-    ) -> Callable[
-        [list[EstimatorPub], EstimatorOptions, float | None],
-        tuple[QuantumProgram, ExecutorOptions],
-    ]:
-        """Return the prepare function.
+    ) -> (
+        Callable[
+            [list[EstimatorPub], EstimatorOptions, float | None],
+            tuple[QuantumProgram, ExecutorOptions],
+        ]
+        | None
+    ):
+        """Return the custom prepare function.
 
         Returns:
-            The currently active prepare function.
+            The custom prepare function, or None if using default dispatching.
         """
-        return self._prepare
+        return self._custom_prepare
 
     @custom_prepare.setter
     def custom_prepare(
@@ -373,14 +409,14 @@ class EstimatorV2(BaseEstimatorV2):
             | None
         ),
     ) -> None:
-        """Set the prepare function.
+        """Set the custom prepare function.
 
         Args:
-            fn: The prepare function to use. Pass None to restore the default prepare function.
+            fn: The prepare function to use. Pass None to restore default dispatching.
 
         Raises:
             TypeError: If fn is not None and not callable.
         """
         if fn is not None and not callable(fn):
             raise TypeError(f"custom_prepare must be callable or None, got {type(fn).__name__}")
-        self._prepare = fn if fn is not None else prepare
+        self._custom_prepare = fn

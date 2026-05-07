@@ -54,17 +54,16 @@ class TestPrepareFunction(unittest.TestCase):
         observable = SparsePauliOp.from_list([("ZZ", 1)])
         pub = EstimatorPub.coerce((circuit, observable))
 
-        quantum_program, executor_options = prepare([pub], self.options, 0.03125)
+        shots = 1024
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
         # Verify QuantumProgram structure
         self.assertIsInstance(quantum_program, QuantumProgram)
-        # precision=0.03125 -> shots = ceil(1/0.03125^2) = 1024
         self.assertEqual(quantum_program.shots, 1024)
         self.assertEqual(len(quantum_program.items), 1)
         self.assertIsInstance(quantum_program.items[0], SamplexItem)
 
-        # Verify shape: param_shape=() + num_bases=1 -> (1,)
-        self.assertEqual(quantum_program.items[0].shape, (1,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
 
         # Verify passthrough data
         self.assertIn("post_processor", quantum_program.passthrough_data)
@@ -82,15 +81,17 @@ class TestPrepareFunction(unittest.TestCase):
         parameter_values = np.array([[0], [np.pi / 2], [np.pi]])
         pub = EstimatorPub.coerce((circuit, observable, parameter_values))
 
-        quantum_program, _ = prepare([pub], self.options, 0.03125)
+        shots = 1024
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
         # Verify item shape includes parameter sweep
         item = quantum_program.items[0]
         self.assertIsInstance(item, SamplexItem)
-        # Shape should be param_shape + (num_bases,)
+        # Shape should be (num_randomizations,) + param_shape + (num_bases,)
+        # num_randomizations is 1 (no twirling)
         # param_shape is (3,) for 3 parameter sets
         # num_bases is 1 for ZZ observable
-        self.assertEqual(item.shape, (3, 1))
+        self.assertEqual(item.shape, (1, 3, 1))
 
     def test_prepare_multiple_observables(self):
         """Test prepare with multiple observables."""
@@ -101,10 +102,10 @@ class TestPrepareFunction(unittest.TestCase):
         observables = ObservablesArray.coerce([{"ZZ": 1}, {"XX": 1}, {"YY": 1}])
         pub = EstimatorPub.coerce((circuit, observables))
 
-        quantum_program, _ = prepare([pub], self.options, 0.03125)
+        shots = 1024
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
-        # Verify shape: param_shape=() + num_bases=3 (ZZ, XX, YY don't commute) -> (3,)
-        self.assertEqual(quantum_program.items[0].shape, (3,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 3))
 
         # Verify observables are stored
         self.assertEqual(len(quantum_program.passthrough_data["observables"]), 1)
@@ -124,35 +125,34 @@ class TestPrepareFunction(unittest.TestCase):
         pub1 = EstimatorPub.coerce((circuit1, observable1))
         pub2 = EstimatorPub.coerce((circuit2, observable2))
 
-        quantum_program, _ = prepare([pub1, pub2], self.options, 0.03125)
+        shots = 1024
+        quantum_program = prepare([pub1, pub2], self.options.twirling, shots)
 
         # Verify multiple items
         self.assertEqual(len(quantum_program.items), 2)
 
-        # Verify shapes: both have param_shape=() + num_bases=1 -> (1,)
-        self.assertEqual(quantum_program.items[0].shape, (1,))
-        self.assertEqual(quantum_program.items[1].shape, (1,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
+        self.assertEqual(quantum_program.items[1].shape, (1, 1))
 
         self.assertEqual(len(quantum_program.passthrough_data["observables"]), 2)
         self.assertEqual(len(quantum_program.passthrough_data["measure_bases"]), 2)
 
-    def test_prepare_uses_precision(self):
-        """Test that prepare uses precision when pub doesn't specify."""
+    def test_prepare_uses_shots(self):
+        """Test that prepare uses shots correctly."""
         circuit = QuantumCircuit(2)
         circuit.h(0)
 
         observable = SparsePauliOp.from_list([("ZZ", 1)])
-        pub = EstimatorPub.coerce((circuit, observable))  # No precision
+        pub = EstimatorPub.coerce((circuit, observable))
 
-        precision = 0.01
-        quantum_program, _ = prepare([pub], self.options, precision=precision)
+        shots = 10000
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
         self.assertEqual(quantum_program.shots, 10000)
-        # Verify shape
-        self.assertEqual(quantum_program.items[0].shape, (1,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
 
-    def test_prepare_options_mapping(self):
-        """Test that prepare correctly maps EstimatorOptions to ExecutorOptions."""
+    def test_prepare_with_twirling_options(self):
+        """Test that prepare correctly uses twirling options."""
         circuit = QuantumCircuit(2)
         circuit.h(0)
 
@@ -160,19 +160,10 @@ class TestPrepareFunction(unittest.TestCase):
         pub = EstimatorPub.coerce((circuit, observable))
 
         options = EstimatorOptions()
-        options.execution.init_qubits = True
-        options.execution.rep_delay = 0.001
-        options.max_execution_time = 300
+        shots = 1024
+        quantum_program = prepare([pub], options.twirling, shots)
 
-        quantum_program, executor_options = prepare([pub], options, precision=0.03125)
-
-        # Verify shape
-        self.assertEqual(quantum_program.items[0].shape, (1,))
-
-        # Verify options were mapped
-        self.assertTrue(executor_options.execution.init_qubits)
-        self.assertEqual(executor_options.execution.rep_delay, 0.001)
-        self.assertEqual(executor_options.environment.max_execution_time, 300)
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
 
     def test_prepare_passthrough_data_structure(self):
         """Test the structure of passthrough_data."""
@@ -182,10 +173,10 @@ class TestPrepareFunction(unittest.TestCase):
         observable = SparsePauliOp.from_list([("ZZ", 1)])
         pub = EstimatorPub.coerce((circuit, observable))
 
-        quantum_program, _ = prepare([pub], self.options, precision=0.03125)
+        shots = 1024
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
-        # Verify shape
-        self.assertEqual(quantum_program.items[0].shape, (1,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
 
         passthrough = quantum_program.passthrough_data
 
@@ -207,14 +198,14 @@ class TestPrepareFunction(unittest.TestCase):
         observable = SparsePauliOp.from_list([("ZZ", 1)])
         pub = EstimatorPub.coerce((circuit, observable))
 
-        quantum_program, _ = prepare([pub], self.options, precision=0.03125)
+        shots = 1024
+        quantum_program = prepare([pub], self.options.twirling, shots)
 
         self.assertEqual(quantum_program.meas_level, "classified")
-        # Verify shape
-        self.assertEqual(quantum_program.items[0].shape, (1,))
+        self.assertEqual(quantum_program.items[0].shape, (1, 1))
 
     def test_prepare_with_mid_circuit_measurements(self):
-        """Test that prepare works correctly with circuits containing mid-circuit measurements."""
+        """Test that prepare raises error for circuits with mid-circuit measurements."""
         # Create a circuit with mid-circuit measurements
         circuit = QuantumCircuit(3, 3)
         circuit.h(0)
@@ -224,47 +215,14 @@ class TestPrepareFunction(unittest.TestCase):
         # Continue with more gates after measurement
         circuit.h(0)
         circuit.cx(0, 2)
-        circuit.measure_all()
 
         observable = SparsePauliOp.from_list([("ZZZ", 1)])
         pub = EstimatorPub.coerce((circuit, observable))
 
-        # Should not raise an error - mid-circuit measurements are now supported
-        quantum_program, executor_options = prepare([pub], self.options, precision=0.03125)
+        shots = 1024
 
-        # Verify QuantumProgram structure
-        self.assertIsInstance(quantum_program, QuantumProgram)
-        self.assertEqual(quantum_program.shots, 1024)
-        self.assertEqual(len(quantum_program.items), 1)
-
-        # Verify shape
-        item = quantum_program.items[0]
-        self.assertIsInstance(item, SamplexItem)
-        self.assertEqual(item.shape, (1,))
-
-        # Verify the circuit has the expected number of measurements
-        # We expect 1 mid-circuit measurement + 3 from measure_all() = 4 total
-        op_counts = item.circuit.count_ops()
-        self.assertEqual(
-            op_counts.get("measure", 0), 4, "Circuit should have 4 measurement operations"
-        )
-
-        # Verify passthrough data is present
-        self.assertIn("post_processor", quantum_program.passthrough_data)
-        self.assertIn("observables", quantum_program.passthrough_data)
-        self.assertIn("measure_bases", quantum_program.passthrough_data)
-
-    def test_prepare_mismatched_precision_raises_error(self):
-        """Test that pubs with different precision values raise an error."""
-        circuit = QuantumCircuit(2)
-        circuit.h(0)
-        observable = SparsePauliOp.from_list([("ZZ", 1)])
-
-        # Create pubs with different precision values
-        pub1 = EstimatorPub.coerce((circuit, observable), precision=0.01)
-        pub2 = EstimatorPub.coerce((circuit, observable), precision=0.02)
-
+        # Should raise an error - mid-circuit measurements are not supported
         with self.assertRaises(IBMInputValueError) as context:
-            prepare([pub1, pub2], self.options, precision=None)
+            prepare([pub], self.options.twirling, shots)
 
-        self.assertIn("same precision", str(context.exception))
+        self.assertIn("mid-circuit measurements", str(context.exception))

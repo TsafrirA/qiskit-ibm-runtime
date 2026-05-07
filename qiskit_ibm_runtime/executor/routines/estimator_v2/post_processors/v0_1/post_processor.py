@@ -161,6 +161,8 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
             f"number of pubs ({len(result)})."
         )
 
+    shots = result[0]["meas"].shape[0] * result[0]["meas"].shape[-2]
+
     # Build EstimatorPubResult for each pub
     pub_results = []
     for idx, (item_data, observables_data, measure_bases_labels) in enumerate(
@@ -175,14 +177,14 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
         measure_bases = PauliList(measure_bases_labels)
 
         # Get measurement data
-        # Shape: param_shape + (num_bases,) + (shots, num_bits)
+        # Shape: (num_randomizations,) + param_shape + (num_bases,) + (shots, num_bits)
         meas_data = item_data["meas"]
+        # Apply measurement flips if present
+        if "measurement_flips.meas" in item_data:
+            meas_data ^= item_data["measurement_flips.meas"]
 
         # Extract param_shape from measurement data
-        # meas_data has shape: param_shape + (num_bases,) + (shots, num_bits)
-        param_shape = meas_data.shape[:-3] if meas_data.ndim > 3 else ()
-
-        # Compute output shape by broadcasting param_shape with obs_shape
+        param_shape = meas_data.shape[1:-3] if meas_data.ndim > 4 else ()
         obs_shape = observables.shape
 
         # Compute expectation values for all observables first
@@ -191,8 +193,6 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
         stds_dict = {}
 
         for obs_idx, observable in np.ndenumerate(observables):
-            # Initialize with numpy arrays (works for both scalar and array shapes)
-            # np.zeros(()) creates a 0-d array for scalar case
             exp_val = np.zeros(param_shape, dtype=float)
             variance = np.zeros(param_shape, dtype=float)
 
@@ -202,16 +202,16 @@ def estimator_v2_post_processor_v0_1(result: QuantumProgramResult) -> PrimitiveR
                 basis_idx = identify_measure_basis(pauli_basis, measure_bases)
 
                 # Get measurement data for this basis
-                # Shape: param_shape + (shots, num_qubits)
+                # Shape: (num_randomizations) + param_shape + (shots, num_qubits)
                 datum = meas_data[..., basis_idx, :, :]
-                term_exp_val, term_std = compute_exp_val(observable_term, datum)
+                term_exp_val, term_variance = compute_exp_val(observable_term, datum)
 
                 # Accumulate with coefficient
                 exp_val = exp_val + coeff * term_exp_val
-                variance = variance + (coeff**2) * (term_std**2)
+                variance = variance + (coeff**2) * term_variance
 
             exp_vals_dict[obs_idx] = exp_val
-            stds_dict[obs_idx] = np.sqrt(variance)
+            stds_dict[obs_idx] = np.sqrt(variance / shots)  # Standard error
 
         # Broadcast expectation values and standard deviations to output shape
         evs_array, stds_array = _broadcast_expectation_values(

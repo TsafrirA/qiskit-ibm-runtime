@@ -30,22 +30,24 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
     def test_post_processor_single_pub_single_observable(self):
         """Test post-processor with single pub and single observable."""
         # Create mock measurement data
-        # Shape: (num_bases, shots, num_qubits)
+        # Shape: (num_randomizations, num_bases, shots, num_qubits)
         # For ZZ observable, we need 1 basis (Z basis)
         meas_data = np.array(
             [
-                # Basis 0 (Z basis): 10 shots, 2 qubits
                 [
-                    [False, False],  # 00 -> +1
-                    [False, False],  # 00 -> +1
-                    [False, True],  # 01 -> -1
-                    [True, False],  # 10 -> -1
-                    [True, True],  # 11 -> +1
-                    [False, False],  # 00 -> +1
-                    [False, False],  # 00 -> +1
-                    [False, False],  # 00 -> +1
-                    [False, False],  # 00 -> +1
-                    [False, False],  # 00 -> +1
+                    # Basis 0 (Z basis): 10 shots, 2 qubits
+                    [
+                        [False, False],  # 00 -> +1
+                        [False, False],  # 00 -> +1
+                        [False, True],  # 01 -> -1
+                        [True, False],  # 10 -> -1
+                        [True, True],  # 11 -> +1
+                        [False, False],  # 00 -> +1
+                        [False, False],  # 00 -> +1
+                        [False, False],  # 00 -> +1
+                        [False, False],  # 00 -> +1
+                        [False, False],  # 00 -> +1
+                    ]
                 ]
             ]
         )
@@ -84,14 +86,17 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
     def test_post_processor_multiple_observables(self):
         """Test post-processor with multiple observables."""
         # Create mock measurement data for two bases
+        # Shape: (num_randomizations, num_bases, shots, num_qubits)
         # Basis 0: Z basis for ZZ observable
         # Basis 1: X basis for XX observable
         meas_data = np.array(
             [
-                # Basis 0 (Z basis): all 00
-                [[False, False]] * 10,
-                # Basis 1 (X basis): all 00
-                [[False, False]] * 10,
+                [
+                    # Basis 0 (Z basis): all 00
+                    [[False, False]] * 10,
+                    # Basis 1 (X basis): all 00
+                    [[False, False]] * 10,
+                ]
             ]
         )
 
@@ -120,7 +125,8 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
     def test_post_processor_with_coefficients(self):
         """Test post-processor with observable coefficients."""
         # ZZ observable with coefficient 2.0
-        meas_data = np.array([[[False, False]] * 10])  # All 00 -> +1
+        # Shape: (num_randomizations, num_bases, shots, num_qubits)
+        meas_data = np.array([[[[False, False]] * 10]])  # All 00 -> +1
 
         result_data = [{"meas": meas_data}]
 
@@ -146,8 +152,9 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
     def test_post_processor_multiple_pubs(self):
         """Test post-processor with multiple pubs."""
         # Create data for two pubs
-        meas_data_1 = np.array([[[False, False]] * 10])
-        meas_data_2 = np.array([[[True, True]] * 10])
+        # Shape: (num_randomizations, num_bases, shots, num_qubits)
+        meas_data_1 = np.array([[[[False, False]] * 10]])
+        meas_data_2 = np.array([[[[True, True]] * 10]])
 
         result_data = [{"meas": meas_data_1}, {"meas": meas_data_2}]
 
@@ -179,17 +186,19 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
     def test_post_processor_with_parameter_sweep(self):
         """Test post-processor with parameter sweep."""
         # Create data with parameter sweep dimension
-        # Shape: (num_param_values, num_bases, shots, num_qubits)
+        # Shape: (num_randomizations, num_param_values, num_bases, shots, num_qubits)
         meas_data = np.array(
             [
                 [
-                    # Parameter value 0: all 00
-                    [[False, False]] * 5,
-                ],
-                [
-                    # Parameter value 1: all 11
-                    [[True, True]] * 5,
-                ],
+                    [
+                        # Parameter value 0: all 00
+                        [[False, False]] * 5,
+                    ],
+                    [
+                        # Parameter value 1: all 11
+                        [[True, True]] * 5,
+                    ],
+                ]
             ]
         )
 
@@ -266,7 +275,8 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
 
     def test_post_processor_with_circuit_metadata(self):
         """Test post-processor preserves circuit metadata."""
-        meas_data = np.array([[[False, False]] * 10])
+        # Shape: (num_randomizations, num_bases, shots, num_qubits)
+        meas_data = np.array([[[[False, False]] * 10]])
 
         result_data = [{"meas": meas_data}]
 
@@ -298,24 +308,25 @@ class TestEstimatorV2PostProcessor(unittest.TestCase):
         # param_shape = (3, 4, 1, 1), obs_shape = (4, 3)
         # broadcast((3,4,1,1), (4,3)) = (3,4,4,3)
 
-        # Create measurement data: (3, 4, 1, 1, num_bases, shots, qubits)
+        # Create measurement data:
+        # (num_randomizations, 3, 4, 1, 1, num_bases, shots, qubits)
         # Use 1 basis for simplicity (all observables are ZZ)
-        meas_data = np.zeros((3, 4, 1, 1, 1, 10, 2), dtype=bool)
+        meas_data = np.zeros((1, 3, 4, 1, 1, 1, 10, 2), dtype=bool)
 
         # Fill with a pattern: param (i,j,0,0) gives measurement based on (i+j) % 4
         for i in range(3):
             for j in range(4):
                 pattern = (i + j) % 4
                 if pattern == 0:  # 00 -> +1
-                    meas_data[i, j, 0, 0, 0, :, :] = False
+                    meas_data[0, i, j, 0, 0, 0, :, :] = False
                 elif pattern == 1:  # 01 -> -1
-                    meas_data[i, j, 0, 0, 0, :, 0] = False
-                    meas_data[i, j, 0, 0, 0, :, 1] = True
+                    meas_data[0, i, j, 0, 0, 0, :, 0] = False
+                    meas_data[0, i, j, 0, 0, 0, :, 1] = True
                 elif pattern == 2:  # 10 -> -1
-                    meas_data[i, j, 0, 0, 0, :, 0] = True
-                    meas_data[i, j, 0, 0, 0, :, 1] = False
+                    meas_data[0, i, j, 0, 0, 0, :, 0] = True
+                    meas_data[0, i, j, 0, 0, 0, :, 1] = False
                 else:  # 11 -> +1
-                    meas_data[i, j, 0, 0, 0, :, :] = True
+                    meas_data[0, i, j, 0, 0, 0, :, :] = True
 
         result_data = [{"meas": meas_data}]
 

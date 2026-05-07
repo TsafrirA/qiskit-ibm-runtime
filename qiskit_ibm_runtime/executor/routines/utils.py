@@ -114,19 +114,16 @@ def calculate_twirling_shots(
 def resolve_precision(
     pubs: list[EstimatorPub],
     run_precision: float | None = None,
-    default_precision: float | None = None,
 ) -> float | None:
     """Resolve precision from multiple sources with clear precedence.
 
     Precedence order (highest to lowest):
     1. Individual pub precision (must be consistent across all pubs)
     2. run() method precision parameter (run_precision)
-    3. EstimatorOptions.default_precision (default_precision)
 
     Args:
         pubs: List of estimator pubs (may contain precision values).
         run_precision: Precision specified in run() method.
-        default_precision: Default precision from EstimatorOptions.
 
     Returns:
         The resolved precision value, or None if no precision is specified anywhere.
@@ -134,13 +131,8 @@ def resolve_precision(
     Raises:
         IBMInputValueError: If pubs have different precision values.
     """
-    # Determine fallback: run parameter takes precedence over options.default_precision
-    fallback_precision = run_precision if run_precision is not None else default_precision
-
     # Extract precision from pubs, using fallback for pubs without explicit precision
-    pub_precisions = {
-        pub.precision if pub.precision is not None else fallback_precision for pub in pubs
-    }
+    pub_precisions = {pub.precision if pub.precision is not None else run_precision for pub in pubs}
 
     # Remove None if it's still there (no precision specified anywhere)
     pub_precisions = {p for p in pub_precisions if p is not None}

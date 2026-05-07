@@ -105,11 +105,6 @@ class TestEstimatorOptions(unittest.TestCase):
         self.assertEqual(executor_options.environment.image, "custom:image")
         self.assertEqual(executor_options.experimental.get("other"), "value")
 
-    def test_no_twirling_options(self):
-        """Test that EstimatorOptions doesn't have twirling options."""
-        options = EstimatorOptions()
-        self.assertFalse(hasattr(options, "twirling"))
-
     def test_no_dynamical_decoupling_options(self):
         """Test that EstimatorOptions doesn't have dynamical decoupling options."""
         options = EstimatorOptions()

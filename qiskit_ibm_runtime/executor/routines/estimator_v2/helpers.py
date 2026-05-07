@@ -166,21 +166,22 @@ def identify_measure_basis(pauli: Pauli, measure_bases: list[Pauli]) -> int:
 
 
 def compute_exp_val(observable_term: str, datum: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Compute expectation value and standard deviation of an observable term from measurement data.
+    """Compute expectation value and variance of an observable term from measurement data.
 
     Args:
         observable_term: Observable term string (e.g., "ZZZ", "0X1", "IXI")
-        datum: Boolean array of measurement outcomes, shape (..., shots, num_qubits)
+        datum: Boolean array of measurement outcomes, shape
+            (num_randomizations, ..., shots_per_randomization, num_qubits)
 
     Returns:
-        Tuple of (expectation_values, standard_deviations), each with shape (...,)
+        Tuple of (expectation_values, variance), each with shape (...,)
 
     Algorithm:
     1. Project term to Z basis
     2. Compute eigenvalues: prod(1 - 2*bit) for Z positions
     3. Apply projector filters for 0/1 positions
-    4. Average over shots for expectation value
-    5. Compute standard error for standard deviation
+    4. Average over shots and randomizations for expectation value
+    5. Compute variance: E[X²] - E[X]²
     """
     z_term = project_to_z(observable_term)
 
@@ -208,17 +209,16 @@ def compute_exp_val(observable_term: str, datum: np.ndarray) -> tuple[np.ndarray
             keep &= np.all(datum[..., is_1], axis=-1)
         evals = np.where(keep, evals, 0)
 
-    shots = datum.shape[-2]
+    shots = datum.shape[0] * datum.shape[-2]  # randomizations * shots_per_randomizations
 
     # Compute expectation value
-    exp_val = np.sum(evals, axis=-1) / shots
+    exp_val = np.sum(evals, axis=(0, -1)) / shots
 
     # Compute standard deviation (standard error of the mean)
     # variance = E[X²] - E[X]²
     evals_squared = evals**2
-    mean_squared = np.sum(evals_squared, axis=-1) / shots
+    mean_squared = np.sum(evals_squared, axis=(0, -1)) / shots
     variance = mean_squared - exp_val**2
-    std = np.sqrt(variance / shots)
 
     # Ensure we always return numpy arrays (even for scalar results)
-    return np.asarray(exp_val), np.asarray(std)
+    return np.asarray(exp_val), np.asarray(variance)
