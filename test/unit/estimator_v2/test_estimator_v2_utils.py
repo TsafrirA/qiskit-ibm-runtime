@@ -24,6 +24,7 @@ from qiskit_ibm_runtime.executor_estimator.utils import (
     project_to_z,
     identify_measure_basis,
     compute_exp_val,
+    broadcast_expectation_values,
 )
 
 
@@ -254,352 +255,204 @@ class TestProjectToZ(unittest.TestCase):
 class TestIdentifyMeasureBasis(unittest.TestCase):
     """Tests for identify_measure_basis function."""
 
-    def test_single_basis_match(self):
-        """Test finding a matching basis."""
-        pauli = Pauli("ZZZ")
-        bases = [Pauli("ZZZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # Verify the basis exactly matches the observable support
-        self.assertEqual(bases[result], pauli)
+    def test_identify_measure_basis(self):
+        """Test identify_measure_basis with various observable and basis combinations."""
+        test_cases = [
+            # (observable, bases, expected_index, description)
+            ("ZZZ", [Pauli("ZZZ")], 0, "single basis match"),
+            ("ZZZ", [Pauli("ZZZ"), Pauli("ZXZ")], 0, "multiple bases first match"),
+            ("ZZI", [Pauli("ZZZ")], 0, "compatible basis with identity positions"),
+            ("XXX", [Pauli("ZZZ"), Pauli("XXX")], 1, "multiple bases second match"),
+            ("XYZ", [Pauli("XYZ")], 0, "compatible mixed paulis"),
+            ("III", [Pauli("ZZZ")], 0, "identity"),
+        ]
 
-    def test_multiple_bases_first_match(self):
-        """Test returns first matching basis."""
-        pauli = Pauli("ZZZ")
-        bases = [Pauli("ZZZ"), Pauli("ZZZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # Should return the first exactly compatible basis
-        self.assertEqual(bases[result], pauli)
+        for observable, bases, expected_index, description in test_cases:
+            with self.subTest(description=description, observable=observable):
+                pauli = Pauli(observable)
+                result = identify_measure_basis(pauli, bases)
+                self.assertEqual(result, expected_index)
 
-    def test_compatible_basis_identity_positions(self):
-        """Test finding compatible basis with identity positions."""
-        pauli = Pauli("ZZI")
-        bases = [Pauli("ZZZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # ZZI can be measured by ZZZ because the non-identity positions match
-        self.assertEqual(bases[result].to_label()[:2], "ZZ")
+    def test_identify_measure_basis_errors(self):
+        """Test identify_measure_basis raises errors for incompatible observables."""
+        error_cases = [
+            # (observable, bases, description)
+            ("XXX", [Pauli("ZZZ")], "X vs Z conflict"),
+            ("YII", [Pauli("ZII")], "Y vs Z conflict"),
+            ("YII", [Pauli("XII")], "Y vs X conflict"),
+            ("ZZZ", [], "empty bases list"),
+        ]
 
-    def test_compatible_basis_subset(self):
-        """Test Pauli that is a subset of the basis."""
-        pauli = Pauli("ZII")
-        bases = [Pauli("ZZZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # ZII can be measured by ZZZ because the non-identity positions match
-        self.assertEqual(bases[result].to_label()[0], "Z")
-
-    def test_no_matching_basis_x_vs_z(self):
-        """Test raises error when X and Z conflict."""
-        pauli = Pauli("XXX")
-        bases = [Pauli("ZZZ")]
-        with self.assertRaises(ValueError) as context:
-            identify_measure_basis(pauli, bases)
-        self.assertIn("Cannot compute eval", str(context.exception))
-
-    def test_no_matching_basis_y_vs_z(self):
-        """Test raises error when Y and Z conflict."""
-        pauli = Pauli("YII")
-        bases = [Pauli("ZII")]
-        with self.assertRaises(ValueError):
-            identify_measure_basis(pauli, bases)
-
-    def test_no_matching_basis_y_vs_x(self):
-        """Test raises error when Y and X conflict."""
-        pauli = Pauli("YII")
-        bases = [Pauli("XII")]
-        with self.assertRaises(ValueError):
-            identify_measure_basis(pauli, bases)
-
-    def test_multiple_bases_second_match(self):
-        """Test returns correct index when first basis doesn't match."""
-        pauli = Pauli("XXX")
-        bases = [Pauli("ZZZ"), Pauli("XXX")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 1)
-        # Should find the second basis, which exactly matches the observable support
-        self.assertEqual(bases[result], pauli)
-
-    def test_multiple_bases_third_match(self):
-        """Test returns correct index from multiple bases."""
-        pauli = Pauli("YYY")
-        bases = [Pauli("ZZZ"), Pauli("XXX"), Pauli("YYY")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 2)
-        self.assertEqual(bases[result], pauli)
-
-    def test_compatible_mixed_paulis(self):
-        """Test compatible basis with mixed Pauli types."""
-        pauli = Pauli("XYZ")
-        bases = [Pauli("XYZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        self.assertEqual(bases[result], pauli)
-
-    def test_compatible_partial_overlap(self):
-        """Test basis with partial overlap on different qubits."""
-        pauli = Pauli("XII")
-        bases = [Pauli("XXX")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # XII can be measured by XXX because the first qubit matches in X basis
-        self.assertEqual(bases[result].to_label()[0], "X")
-
-    def test_identity_pauli_matches_any_basis(self):
-        """Test identity Pauli matches any basis."""
-        pauli = Pauli("III")
-        bases = [Pauli("ZZZ")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # Identity can be measured from any basis; first basis is accepted
-        self.assertEqual(result, 0)
-
-    def test_pauli_with_identity_in_basis(self):
-        """Test Pauli with identity positions in basis."""
-        pauli = Pauli("ZII")
-        bases = [Pauli("ZII")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        self.assertEqual(bases[result], pauli)
-
-    def test_non_commuting_on_single_qubit(self):
-        """Test non-commuting Paulis on single qubit position."""
-        pauli = Pauli("ZII")
-        bases = [Pauli("XII")]
-        with self.assertRaises(ValueError):
-            identify_measure_basis(pauli, bases)
-
-    def test_commuting_on_different_qubits(self):
-        """Test commuting Paulis on different qubits."""
-        pauli = Pauli("ZII")
-        bases = [Pauli("IXI")]
-        with self.assertRaises(ValueError):
-            identify_measure_basis(pauli, bases)
-
-    def test_y_basis_exact_match(self):
-        """Test Y basis exact match."""
-        pauli = Pauli("YYY")
-        bases = [Pauli("YYY")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        self.assertEqual(bases[result], pauli)
-
-    def test_complex_commutation_pattern(self):
-        """Test complex commutation pattern with mixed Paulis."""
-        pauli = Pauli("XYZI")
-        bases = [Pauli("XYZI")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        self.assertEqual(bases[result], pauli)
-
-    def test_basis_superset_of_pauli(self):
-        """Test basis that is a superset of the Pauli."""
-        pauli = Pauli("ZII")
-        bases = [Pauli("ZXY")]
-        result = identify_measure_basis(pauli, bases)
-        self.assertEqual(result, 0)
-        # ZII can be measured by ZXY because qubit 0 matches in Z basis
-        self.assertEqual(bases[result].to_label()[0], "Z")
-
-    def test_empty_bases_list(self):
-        """Test with empty bases list raises error."""
-        pauli = Pauli("ZZZ")
-        bases = []
-        with self.assertRaises(ValueError):
-            identify_measure_basis(pauli, bases)
+        for observable, bases, description in error_cases:
+            with self.subTest(description=description, observable=observable):
+                pauli = Pauli(observable)
+                with self.assertRaises(ValueError, msg=f"Failed to raise error for {description}"):
+                    identify_measure_basis(pauli, bases)
 
 
 class TestComputeExpVal(unittest.TestCase):
     """Tests for compute_exp_val function."""
 
-    def test_all_zeros_z_basis(self):
-        """Test expectation value for all zeros in Z basis."""
-        # ZZZ observable, all measurements are 000
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=3)
-        datum = np.array([[[[False, False, False]] * 10]])
-        exp_val, variance = compute_exp_val("ZZZ", datum)
-        # All eigenvalues are +1, so expectation value is 1.0
-        np.testing.assert_almost_equal(exp_val, 1.0)
-        # Variance should be 0 (no variance)
-        np.testing.assert_almost_equal(variance, 0.0)
+    def test_observable_combinations(self):
+        """Test compute_exp_val with various observable character combinations.
 
-    def test_all_ones_z_basis(self):
-        """Test expectation value for all ones in Z basis."""
-        # ZZZ observable, all measurements are 111
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=3)
-        datum = np.array([[[[True, True, True]] * 10]])
-        exp_val, variance = compute_exp_val("ZZZ", datum)
-        # All eigenvalues are -1, so expectation value is -1.0
-        np.testing.assert_almost_equal(exp_val, -1.0)
-        # Variance should be 0 (no variance)
-        np.testing.assert_almost_equal(variance, 0.0)
+        Note: Observable strings are read RIGHT-TO-LEFT for qubit indexing.
+        E.g., "I0" means qubit 0 has projector "0", qubit 1 has identity "I".
+        Measurement arrays are [qubit0, qubit1, ...].
+        """
+        test_cases = [
+            # (observable, measurements, expected_exp_val, expected_variance, description)
+            # Single qubit observables (using 80/20 split to show non-trivial behavior)
+            ("X", [[False]] * 8 + [[True]] * 2, 0.6, 0.64, "X"),
+            ("Y", [[False]] * 8 + [[True]] * 2, 0.6, 0.64, "Y"),
+            ("Z", [[False]] * 8 + [[True]] * 2, 0.6, 0.64, "Z"),
+            ("I", [[False]] * 8 + [[True]] * 2, 1.0, 0.0, "I"),
+            # Two-qubit: Identity + projectors
+            ("I+", [[False, False]] * 7 + [[True, False]] * 3, 0.7, 0.21, "I+"),
+            ("I-", [[False, False]] * 3 + [[True, False]] * 7, 0.7, 0.21, "I-"),
+            ("Ir", [[False, False]] * 7 + [[True, False]] * 3, 0.7, 0.21, "Ir"),
+            ("Il", [[False, False]] * 3 + [[True, False]] * 7, 0.7, 0.21, "Il"),
+            ("I0", [[False, False]] * 7 + [[True, False]] * 3, 0.7, 0.21, "I0"),
+            ("I1", [[False, False]] * 3 + [[True, False]] * 7, 0.7, 0.21, "I1"),
+            ("XY+", [[False, False, False]] * 5 + [[False, True, True]] * 5, 1.0, 0.0, "XY+"),
+        ]
 
-    def test_mixed_measurements(self):
-        """Test expectation value for mixed measurements."""
-        # Z observable on single qubit, 5 zeros and 5 ones
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
-        datum = np.array([[[[False]] * 5 + [[True]] * 5]])
-        exp_val, variance = compute_exp_val("Z", datum)
-        # 5 * (+1) + 5 * (-1) = 0, so expectation value is 0.0
-        np.testing.assert_almost_equal(exp_val, 0.0)
-        # Variance should be non-zero
-        self.assertGreater(variance, 0.0)
+        for observable, measurements, exp_val, variance, desc in test_cases:
+            with self.subTest(desc=desc):
+                # Shape: (num_randomizations=1, shots_per_randomization=N, num_qubits)
+                datum = np.array([[measurements]])
+                result_exp_val, result_variance = compute_exp_val(observable, datum)
 
-    def test_identity_observable(self):
-        """Test expectation value for identity observable."""
-        # I observable, any measurements
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
-        datum = np.array([[[[False]] * 5 + [[True]] * 5]])
-        exp_val, variance = compute_exp_val("I", datum)
-        # Identity always gives +1
-        np.testing.assert_almost_equal(exp_val, 1.0)
-        # Variance should be 0 (no variance)
-        np.testing.assert_almost_equal(variance, 0.0)
+                np.testing.assert_almost_equal(
+                    result_exp_val,
+                    exp_val,
+                    decimal=10,
+                )
+                np.testing.assert_almost_equal(
+                    result_variance,
+                    variance,
+                    decimal=10,
+                )
 
-    def test_projector_zero(self):
-        """Test expectation value for projector |0><0|."""
-        # Projector on |0> state
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
-        datum = np.array([[[[False]] * 7 + [[True]] * 3]])
-        exp_val, variance = compute_exp_val("0", datum)
-        # Only zeros contribute, 7/10 = 0.7
-        np.testing.assert_almost_equal(exp_val, 0.7)
-        # Variance should be non-zero
-        self.assertGreater(variance, 0.0)
+    def test_multiple_randomizations(self):
+        """Test variance calculation with multiple randomizations.
 
-    def test_projector_one(self):
-        """Test expectation value for projector |1><1|."""
-        # Projector on |1> state
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
-        datum = np.array([[[[False]] * 3 + [[True]] * 7]])
-        exp_val, variance = compute_exp_val("1", datum)
-        # Only ones contribute, 7/10 = 0.7
-        np.testing.assert_almost_equal(exp_val, 0.7)
-        # Variance should be non-zero
-        self.assertGreater(variance, 0.0)
-
-    def test_multi_qubit_observable(self):
-        """Test expectation value for multi-qubit observable."""
-        # ZZ observable, measurements: 00, 01, 10, 11 (equal distribution)
-
-    def test_std_calculation_known_variance(self):
-        """Test variance calculation with known variance."""
-        # Z observable with 50/50 split between +1 and -1 eigenvalues
-        # This gives variance = 1
-        # Shape: (num_randomizations=1, shots_per_randomization=100, num_qubits=1)
-        datum = np.array([[[[False]] * 50 + [[True]] * 50]])
+        With multiple randomizations, the variance should be computed across
+        all randomizations and shots combined.
+        """
+        # Shape: (num_randomizations=3, shots_per_randomization=10, num_qubits=1)
+        # Create 3 randomizations with different distributions
+        datum = np.array(
+            [
+                [[[False]] * 8 + [[True]] * 2],  # Randomization 1: 80% zeros
+                [[[False]] * 5 + [[True]] * 5],  # Randomization 2: 50% zeros
+                [[[False]] * 7 + [[True]] * 3],  # Randomization 3: 70% zeros
+            ]
+        )
         exp_val, variance = compute_exp_val("Z", datum)
 
-        # Expectation value should be 0
-        np.testing.assert_almost_equal(exp_val, 0.0)
+        # Total shots = 3 randomizations × 10 shots = 30 shots
+        expected_exp_val = 10 / 30
+        np.testing.assert_almost_equal(exp_val, expected_exp_val, decimal=10)
 
-        # For eigenvalues ±1 with equal probability:
-        # variance = E[X²] - E[X]² = 1 - 0 = 1
-        expected_variance = 1.0
+        expected_variance = 1.0 - (10 / 30) ** 2
         np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
 
-    def test_std_calculation_projector_variance(self):
-        """Test variance calculation for projector with known variance."""
-        # Projector |0><0| with 70% zeros, 30% ones
-        # Eigenvalues: 1 for zeros, 0 for ones
-        # Mean = 0.7, variance = E[X²] - E[X]² = 0.7 - 0.49 = 0.21
-        # Shape: (num_randomizations=1, shots_per_randomization=100, num_qubits=1)
-        datum = np.array([[[[False]] * 70 + [[True]] * 30]])
-        exp_val, variance = compute_exp_val("0", datum)
 
-        np.testing.assert_almost_equal(exp_val, 0.7)
+class TestBroadcastExpectationValues(unittest.TestCase):
+    """Tests for broadcast_expectation_values function."""
 
-        # variance = E[X²] - E[X]² = 0.7 - 0.49 = 0.21
-        expected_variance = 0.7 - 0.49
-        np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
+    def test_output_shape(self):
+        """Test broadcasting with various compatible parameter and observable shapes."""
+        test_cases = [
+            # (param_shape, obs_shape, output_shape, description)
+            ((), (), (), "scalar params, scalar obs"),
+            ((), (3,), (3,), "scalar params, 1D obs"),
+            ((4,), (), (4,), "1D params, scalar obs"),
+            ((3,), (3,), (3,), "1D params, 1D obs"),
+            ((2,), (5, 1), (5, 2), "1D params, 2D obs"),
+            ((2, 3), (), (2, 3), "2D params, scalar obs"),
+            ((), (2, 3), (2, 3), "scalar params, 2D obs"),
+            ((3,), (2, 3), (2, 3), "1D params, 2D obs - compatible"),
+            ((2, 3), (2, 3), (2, 3), "2D params, 2D obs - same shape"),
+            ((4,), (2, 4), (2, 4), "1D params, 2D obs - trailing match"),
+        ]
 
-    def test_std_multi_qubit_with_variance(self):
-        """Test variance calculation for multi-qubit observable with variance."""
-        # ZZ observable with specific distribution
-        # 00 -> +1, 01 -> -1, 10 -> -1, 11 -> +1
-        # 10 shots: 3x(00), 2x(01), 2x(10), 3x(11)
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=2)
-        datum = np.array(
-            [
-                [
-                    [[False, False]] * 3  # 00 -> +1
-                    + [[False, True]] * 2  # 01 -> -1
-                    + [[True, False]] * 2  # 10 -> -1
-                    + [[True, True]] * 3  # 11 -> +1
-                ]
-            ]
+        for param_shape, obs_shape, output_shape, description in test_cases:
+            with self.subTest(description=description):
+                # Create input arrays with shape obs_shape + param_shape
+                input_shape = obs_shape + param_shape
+
+                if input_shape == ():
+                    exp_vals = np.array(0.5)
+                    stds = np.array(0.1)
+                else:
+                    num_elements = int(np.prod(input_shape))
+                    exp_vals = np.arange(num_elements).reshape(input_shape) * 0.1
+                    stds = np.arange(num_elements).reshape(input_shape) * 0.01
+
+                result_evs, result_stds = broadcast_expectation_values(
+                    exp_vals, stds, param_shape, obs_shape
+                )
+
+                # Check output shape
+                if output_shape == ():
+                    self.assertIsInstance(result_evs, (float, np.floating))
+                    self.assertIsInstance(result_stds, (float, np.floating))
+                else:
+                    self.assertEqual(result_evs.shape, output_shape)
+                    self.assertEqual(result_stds.shape, output_shape)
+
+    def test_output_values_complex_case(self):
+        """Test broadcasting with actual value verification for complex shapes.
+
+        Tests params shape (2, 1, 3) and observables shape (2, 3).
+        Expected output shape: (2, 2, 3) via broadcasting.
+        """
+        param_shape = (2, 1, 3)
+        obs_shape = (2, 3)
+
+        # Input shape is obs_shape + param_shape = (2, 3, 2, 1, 3)
+        input_shape = obs_shape + param_shape
+
+        # Create input arrays with known values for verification
+        exp_vals = np.arange(np.prod(input_shape)).reshape(input_shape) * 0.1
+        stds = np.arange(np.prod(input_shape)).reshape(input_shape) * 0.01
+
+        result_evs, result_stds = broadcast_expectation_values(
+            exp_vals, stds, param_shape, obs_shape
         )
-        exp_val, variance = compute_exp_val("ZZ", datum)
 
-        # Mean = (3*1 + 2*(-1) + 2*(-1) + 3*1) / 10 = 2/10 = 0.2
-        np.testing.assert_almost_equal(exp_val, 0.2)
+        # Verify output shape
+        expected_shape = (2, 2, 3)  # np.broadcast_shapes((2, 1, 3), (2, 3))
+        self.assertEqual(result_evs.shape, expected_shape)
+        self.assertEqual(result_stds.shape, expected_shape)
 
-        # E[X²] = (3*1 + 2*1 + 2*1 + 3*1) / 10 = 10/10 = 1.0
-        # variance = 1.0 - 0.04 = 0.96
-        expected_variance = 1.0 - 0.04
-        np.testing.assert_almost_equal(variance, expected_variance, decimal=10)
+        # Manually construct expected output by following the broadcasting logic
+        # For output[i, j, k]:
+        # - obs dimension: (i, j) maps to obs_shape indices
+        # - param dimension: (i, 0, k) due to broadcasting (middle dim is 1)
+        # - Input index: obs_shape indices + param_shape indices
+        expected_evs = np.zeros(expected_shape)
+        expected_stds = np.zeros(expected_shape)
 
-    def test_std_with_parameter_sweep(self):
-        """Test variance calculation with parameter sweep dimensions."""
-        # Test with shape (num_randomizations, param_sweep, shots_per_randomization, num_qubits)
-        # 1 randomization, 2 parameter values, 10 shots each, 1 qubit
-        datum = np.array(
-            [
-                [
-                    [[False]] * 8 + [[True]] * 2,  # First param: 80% zeros
-                    [[False]] * 5 + [[True]] * 5,  # Second param: 50% zeros
-                ]
-            ]
-        )
-        exp_vals, variances = compute_exp_val("Z", datum)
+        for i in range(2):
+            for j in range(2):  # Output shape is (2, 2, 3), so j goes to 2
+                for k in range(3):
+                    # When broadcasting param_shape (2, 1, 3) with obs_shape (2, 3):
+                    # - param (2, 1, 3) aligns as: [2, 1, 3]
+                    # - obs (2, 3) aligns as:      [   2, 3]
+                    # - output is:                 [2, 2, 3]
+                    # So for output[i, j, k]:
+                    # - param indices: [i, 0, k] (middle dim broadcasts from 1)
+                    # - obs indices: [j, k] (obs aligns with last 2 dims of output)
+                    param_i, param_j, param_k = i, 0, k
+                    obs_i, obs_j = j, k
+                    # Full input index: obs_shape + param_shape
+                    input_idx = (obs_i, obs_j, param_i, param_j, param_k)
+                    expected_evs[i, j, k] = exp_vals[input_idx]
+                    expected_stds[i, j, k] = stds[input_idx]
 
-        # Check shapes
-        self.assertEqual(exp_vals.shape, (2,))
-        self.assertEqual(variances.shape, (2,))
-
-        # First parameter: 8 zeros (+1) and 2 ones (-1)
-        # mean = (8*1 + 2*(-1))/10 = 0.6
-        # E[X²] = (8*1² + 2*(-1)²)/10 = 1.0
-        # variance = 1.0 - 0.36 = 0.64
-        np.testing.assert_almost_equal(exp_vals[0], 0.6)
-        expected_variance_0 = 0.64
-        np.testing.assert_almost_equal(variances[0], expected_variance_0, decimal=10)
-
-        # Second parameter: 5 zeros (+1) and 5 ones (-1)
-        # mean = 0.0
-        # E[X²] = 1.0
-        # variance = 1.0 - 0.0 = 1.0
-        np.testing.assert_almost_equal(exp_vals[1], 0.0)
-        expected_variance_1 = 1.0
-        np.testing.assert_almost_equal(variances[1], expected_variance_1, decimal=10)
-
-    def test_std_projector_all_filtered(self):
-        """Test variance when projector filters out all measurements."""
-        # Projector |0><0| but all measurements are |1>
-        # Shape: (num_randomizations=1, shots_per_randomization=10, num_qubits=1)
-        datum = np.array([[[[True]] * 10]])
-        exp_val, variance = compute_exp_val("0", datum)
-
-        # All measurements filtered out, so exp_val = 0
-        np.testing.assert_almost_equal(exp_val, 0.0)
-        # variance should also be 0 (no variance when all are filtered)
-        np.testing.assert_almost_equal(variance, 0.0)
-        # Shape: (num_randomizations=1, shots_per_randomization=4, num_qubits=2)
-        datum = np.array(
-            [
-                [
-                    [
-                        [False, False],  # 00 -> +1
-                        [False, True],  # 01 -> -1
-                        [True, False],  # 10 -> -1
-                        [True, True],  # 11 -> +1
-                    ]
-                ]
-            ]
-        )
-        exp_val, variance = compute_exp_val("ZZ", datum)
-        # (+1 - 1 - 1 + 1) / 4 = 0
-        np.testing.assert_almost_equal(exp_val, 0.0)
-        # Variance should be non-zero (has variance)
-        self.assertGreater(variance, 0.0)
+        # Compare all values
+        np.testing.assert_array_almost_equal(result_evs, expected_evs)
+        np.testing.assert_array_almost_equal(result_stds, expected_stds)

@@ -183,13 +183,6 @@ def compute_exp_val(observable_term: str, datum: np.ndarray) -> tuple[np.ndarray
 
     Returns:
         Tuple of (expectation_values, variance), each with shape (...,)
-
-    Algorithm:
-    1. Project term to Z basis
-    2. Compute eigenvalues: prod(1 - 2*bit) for Z positions
-    3. Apply projector filters for 0/1 positions
-    4. Average over shots and randomizations for expectation value
-    5. Compute variance: E[X²] - E[X]²
     """
     z_term = project_to_z(observable_term)
 
@@ -263,5 +256,68 @@ def resolve_precision(
 
     if len(pub_precisions) != 1:
         raise IBMInputValueError(f"All pubs must have the same precision. Found: {pub_precisions}")
-
     return next(iter(pub_precisions))
+
+
+def broadcast_expectation_values(
+    exp_vals_array: np.ndarray,
+    stds_array: np.ndarray,
+    param_shape: tuple,
+    obs_shape: tuple,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Broadcast expectation values and standard deviations to output shape.
+
+    This function handles broadcasting of parameter and observable shapes to create
+    the final output arrays. It supports all combinations:
+    - Scalar parameters + scalar observables
+    - Scalar parameters + array observables
+    - Array parameters + scalar observables
+    - Array parameters + array observables
+
+    Args:
+        exp_vals_array: Array of expectation values with shape obs_shape + param_shape.
+        stds_array: Array of standard deviations with shape obs_shape + param_shape.
+        param_shape: Shape of parameter sweep (empty tuple for scalar).
+        obs_shape: Shape of observables array (empty tuple for scalar).
+
+    Returns:
+        Tuple of (expectation_values, standard_deviations), each with shape
+        np.broadcast_shapes(param_shape, obs_shape).
+    """
+    output_shape = np.broadcast_shapes(param_shape, obs_shape)
+
+    # Handle scalar case: both param_shape and obs_shape are ()
+    if output_shape == ():
+        return exp_vals_array.item(), stds_array.item()
+
+    # Calculate dimensions
+    num_obs = int(np.prod(obs_shape)) if obs_shape else 1
+    num_params = int(np.prod(param_shape)) if param_shape else 1
+
+    # Reshape input arrays to (num_obs,) + param_shape for easier indexing
+    evs_lookup = exp_vals_array.reshape((num_obs,) + param_shape)
+    stds_lookup = stds_array.reshape((num_obs,) + param_shape)
+
+    # Create index arrays for broadcasting
+    # Shape: param_shape or (1,) for scalar
+    param_indices = np.arange(num_params).reshape(param_shape or (1,))
+    # Shape: obs_shape or (1,) for scalar
+    obs_indices = np.arange(num_obs).reshape(obs_shape or (1,))
+
+    # Broadcast indices to output shape
+    param_bc = np.broadcast_to(param_indices, output_shape)
+    obs_bc = np.broadcast_to(obs_indices, output_shape)
+
+    # Vectorized lookup using advanced indexing
+    if param_shape:
+        # Unravel param indices for multi-dimensional indexing
+        param_unraveled = np.unravel_index(param_bc.ravel(), param_shape)
+        index_tuple = (obs_bc.ravel(),) + param_unraveled
+        evs_result = evs_lookup[index_tuple].reshape(output_shape)
+        stds_result = stds_lookup[index_tuple].reshape(output_shape)
+    else:
+        # Scalar params: just index by obs
+        evs_result = evs_lookup[obs_bc]
+        stds_result = stds_lookup[obs_bc]
+
+    return evs_result, stds_result
